@@ -1,16 +1,32 @@
-# XSTAR Loan News Research Agent
+# XSTAR Global Automotive News Agent
 
-GitHub root: `app.py`, `requirements.txt`, `README.md`, `searching_rules/`.
+Streamlit entrypoint: `app.py`. This repository is the only target for these changes.
 
-1. Upload these files and folder to a GitHub repository.
-2. Streamlit Community Cloud → New app → main file `app.py`.
-3. App Secrets:
-```toml
-SERPER_API_KEY = "..."
-OPENROUTER_API_KEY = "..."
-OPENROUTER_MODEL = "openai/gpt-4o-mini"
-```
-4. Select dates, optionally upload a reference Excel or paste news clues, click **开始研究**.
-5. Review scores, evidence and links; edit entries; download Excel and Outlook HTML.
+## Inputs
+- Required: start date and end date for research.
+- Optional: upload an existing XSTAR Excel workbook with `meta` and `news` sheets.
+- Optional: paste one headline, article URL, WeChat article, Xiaohongshu lead, or industry report clue per line.
+- Optional: issue label.
+- API research only: each user enters their own Serper and OpenRouter API keys in the Streamlit sidebar.
 
-Requires real API credentials and network access. Search engine indexing and website blocking limit completeness. No guarantee of 100% coverage or accuracy. See `searching_rules/RESEARCH_RULES.md` for hard rules.
+## Modes
+1. **Excel-only**: Upload Excel, click **加载 Excel 并立即预览**, edit news, preview HTML, export Excel and HTML. No API key is required.
+2. **AI research**: Select dates, optionally add clues or Excel, enter your own keys, click **AI 搜索 / 补充研究**, review evidence and candidate selection, export.
+3. **Human editorial review**: News without verifiable source dates or locatable evidence remains unselected by default. User-imported news is preserved, but is not automatically AI-verified.
+
+## Files
+- `app.py`: Streamlit app, research, editing, preview and export.
+- `searching_rules/config.json`: research settings.
+- `searching_rules/RESEARCH_RULES.md`: editorial requirements.
+- `templates/HTML_Reference.html`: HTML structure used by the app.
+- `templates/XSTAR_Excel_Master.xlsx`: **required for Excel export when no workbook was uploaded**. Upload the original XSTAR workbook here to preserve its existing format.
+
+## Important limitations
+- The HTML reference is an Outlook-compatible baseline, **not a pixel-identical reproduction of an original report**. The original Outlook HTML generator needs a dedicated regression test before exact-match claims.
+- Source numeric matching is only a conservative validation gate, not independent fact-checking.
+- Search coverage is limited by indexing, paywalls, access restrictions and API budget.
+- A complete live research and Outlook rendering acceptance test requires real user API credentials and a reference HTML artifact.
+- Never commit API keys or put them in Streamlit Secrets for a bring-your-own-key deployment.
+
+## Deployment
+Streamlit Community Cloud → repository `Yolandaladaladala/News-Agent` → branch `main` → entrypoint `app.py`. Keep `requirements.txt` at repository root.
