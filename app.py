@@ -21,9 +21,9 @@ REGIONS=RULES['regions']
 REGION_CODES={'北美地区':'NA','亚太地区':'APAC','中东地区':'ME','欧洲地区':'EU','拉美地区':'LATAM','非洲地区':'AFR'}
 CODE_REGIONS={v:k for k,v in REGION_CODES.items()}
 def region_name(value):
-    return CODE_REGIONS.get(str(value).strip(),str(value).strip() if str(value).strip() in REGIONS else '亚太地区')
+    return CODE_REGIONS.get(str(value).strip(),str(value).strip() if str(value).strip() in REGIONS else '待分类')
 def region_code(value):
-    return REGION_CODES.get(region_name(value),'APAC')
+    return REGION_CODES.get(region_name(value),'UNKNOWN')
 COLS=['region_code','region_name_zh','title','date','location','tags','summary','url','url_label','icon_img_url']
 AUDIT=['score','status','evidence','source_date','source_domain','source_access','reason','selected','order']
 st.set_page_config(page_title='XSTAR News Research Agent',layout='wide',page_icon='📰')
@@ -71,7 +71,7 @@ def country_region(s):
     rules=[('北美地区','美国 usa united states 加拿大 canada 墨西哥 mexico'),('拉美地区','巴西 brazil 阿根廷 argentina 智利 chile 哥伦比亚 colombia'),('欧洲地区','英国 uk britain 德国 germany 法国 france 欧洲 europe 欧盟 eu 意大利 italy'),('中东地区','中东 middle east 沙特 saudi 阿联酋 uae 伊朗 iran 以色列 israel'),('非洲地区','非洲 africa 南非 south africa 埃及 egypt')]
     for reg,words in rules:
         if any(w in s for w in words.split(' ')):return reg
-    return '亚太地区'
+    return '待分类'
 
 def extract_clues(file,txt):
     clues=[x.strip() for x in txt.splitlines() if x.strip()]
@@ -347,8 +347,9 @@ if run:
             shortlist,reserve=rank_candidates(rows,30)
             st.session_state.reserve_pool=reserve
             rows=shortlist
+            # Never auto-publish unverified or untranslated search results.
             for item in rows:
-                item['selected']=True  # Editorial shortlist, not a claim of verification.
+                item['selected']=bool(item.get('status')=='已核验' and item.get('summary') and re.search(r'[\u4e00-\u9fff]',str(item.get('title',''))))
             # A new full research run replaces the previous shortlist; edits do not.
             st.session_state.rows=pd.DataFrame(rows)
             st.session_state.editor_version=st.session_state.get('editor_version',0)+1
@@ -360,7 +361,7 @@ if run:
 if 'rows' in st.session_state:
     df=st.session_state.rows
     st.success(f'当前精选 {len(df)} 条；其中 {int(df.selected.sum())} 条纳入报告。可通过自然语言修改。')
-    st.warning('自动入选不等于事实核验通过。请检查 status 和原文证据后再发布。')
+    st.warning('未核验、无中文标题或无摘要的新闻不会自动入选。手动勾选前请核实原文。')
     if st.session_state.errors:
         with st.expander(f'搜索/分析异常 {len(st.session_state.errors)} 条'):
             st.code('\n'.join(st.session_state.errors[:80]))
@@ -414,6 +415,9 @@ if 'rows' in st.session_state:
     selected=selected.sort_values('order')
     selected['region_code']=selected['region_code'].apply(region_code)
     html_rows=pd.concat([selected[selected.region_code==REGION_CODES[r]] for r in region_order],ignore_index=True)
+    bad=html_rows[html_rows.apply(lambda r: not str(r.get('title','')).strip() or not re.search(r'[\u4e00-\u9fff]',str(r.get('title',''))) or len(str(r.get('summary','')).strip())<35 or not str(r.get('date','')).strip() or str(r.get('url','')).startswith('https://news.google.com/'),axis=1)]
+    publish_ok=bad.empty and not html_rows.empty
+    if not publish_ok:st.error(f'质量门禁未通过：{len(bad)} 条新闻缺中文标题、有效摘要、日期或媒体原文链接；不会生成正式快报。请先修正并核验。')
     s,e,iss=st.session_state.range
     # Excel retains the user's original news text, rows, metadata, and formatting.
     # Inclusion/order only control the HTML, unless actual news cell text is edited.
@@ -422,14 +426,14 @@ if 'rows' in st.session_state:
         xlsx=excel_bytes(edited,s,e,iss,st.session_state.get('original_xlsx'),st.session_state.get('original_rows'))
     except Exception as ex:st.error(f'Excel 导出不可用：{ex}')
     try:
-        page=report_html(html_rows,e,iss,region_order,read_meta(st.session_state.get('original_xlsx')))
+        if publish_ok:page=report_html(html_rows,e,iss,region_order,read_meta(st.session_state.get('original_xlsx')))
     except Exception as ex:st.error(f'HTML 预览不可用：{ex}')
     st.subheader('3 · Outlook HTML 实时预览')
     if st.session_state.get('original_xlsx') is None and not (BASE/'templates/XSTAR_Excel_Master.xlsx').exists():
         st.info('当前 Excel 为简化备用格式。上传原版母版后才能保持原始版式。')
     if page:st.components.v1.html(page,height=720,scrolling=True)
     a,b,c=st.columns(3)
-    with a:st.download_button('📊 下载 Excel',xlsx if xlsx is not None else b'',disabled=xlsx is None,file_name=f'XSTAR_news_{s}_{e}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',use_container_width=True)
+    with a:st.download_button('📊 下载 Excel',xlsx if xlsx is not None else b'',disabled=(xlsx is None or not publish_ok),file_name=f'XSTAR_news_{s}_{e}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',use_container_width=True)
     with b:st.download_button('📧 下载 HTML 快报',page or '',disabled=page is None,file_name=f'全球汽车行业快讯_{e}.html',mime='text/html',use_container_width=True)
     with c:st.download_button('🔍 下载全部研究审计 CSV',edited.to_csv(index=False).encode('utf-8-sig'),file_name=f'XSTAR_audit_{e}.csv',mime='text/csv',use_container_width=True)
 else:
