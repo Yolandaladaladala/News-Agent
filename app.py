@@ -349,13 +349,8 @@ if run:
             rows=shortlist
             for item in rows:
                 item['selected']=True  # Editorial shortlist, not a claim of verification.
-            if 'rows' in st.session_state and len(st.session_state.rows):
-                prior=st.session_state.rows
-                rows_df=pd.DataFrame(rows)
-                combined=pd.concat([prior,rows_df],ignore_index=True)
-                combined=combined.drop_duplicates(subset=['url'],keep='first')
-                st.session_state.rows=combined
-            else:st.session_state.rows=pd.DataFrame(rows)
+            # A new full research run replaces the previous shortlist; edits do not.
+            st.session_state.rows=pd.DataFrame(rows)
             st.session_state.editor_version=st.session_state.get('editor_version',0)+1
             st.session_state.errors=errors
             st.session_state.found=n
