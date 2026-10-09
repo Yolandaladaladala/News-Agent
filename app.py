@@ -11,7 +11,7 @@ from dateutil import parser as dtparse
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
-from free_research import discover, extractive_review, ollama_review
+from free_research import discover, extractive_review, ollama_review, publisher_url
 from agent_workflow import rank_candidates, parse_edit_request, apply_editorial_operations
 from model_gateway import chat_json, interpret_edit
 
@@ -141,6 +141,13 @@ def research(start,end,clues,mode,endpoint,model,progress,depth='快速研究',a
         official=any(d==z or d.endswith('.'+z) for z in RULES['primary_domains'])
         return (0 if official else 1,-sum(k in (x['title']+' '+x['snippet']).lower() for k in ['loan','credit','bank','auto','vehicle','car','finance','สินเชื่อ','汽车','รถยนต์']))
     candidates.sort(key=rank)
+    # Resolve publisher URLs before scraping and never export Google News aggregators.
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        resolved=list(pool.map(lambda x: publisher_url(x['url']),candidates))
+    candidates=[dict(x,url=url) for x,url in zip(candidates,resolved) if url]
+    dedup={}
+    for x in candidates:dedup.setdefault(x['url'].split('?')[0],x)
+    candidates=list(dedup.values())
     rows=[]
     limit=min(len(candidates),max(target,80) if fast and target>=80 else (min(25,len(candidates)) if target<80 else RULES['max_articles_to_review']))
     with ThreadPoolExecutor(max_workers=6) as fetch_pool:
@@ -417,7 +424,7 @@ if 'rows' in st.session_state:
     html_rows=pd.concat([selected[selected.region_code==REGION_CODES[r]] for r in region_order],ignore_index=True)
     bad=html_rows[html_rows.apply(lambda r: not str(r.get('title','')).strip() or not re.search(r'[\u4e00-\u9fff]',str(r.get('title',''))) or len(str(r.get('summary','')).strip())<35 or not str(r.get('date','')).strip() or str(r.get('url','')).startswith('https://news.google.com/'),axis=1)]
     publish_ok=bad.empty and not html_rows.empty
-    if not publish_ok:st.error(f'质量门禁未通过：{len(bad)} 条新闻缺中文标题、有效摘要、日期或媒体原文链接；不会生成正式快报。请先修正并核验。')
+    if not publish_ok:st.warning(f'当前可发布内容不足：{len(bad)} 条缺少必要新闻内容或原文链接。可继续补充研究。')
     s,e,iss=st.session_state.range
     # Excel retains the user's original news text, rows, metadata, and formatting.
     # Inclusion/order only control the HTML, unless actual news cell text is edited.
