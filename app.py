@@ -170,9 +170,9 @@ def research(start,end,clues,mode,endpoint,model,progress,depth='快速研究',a
             source_nums=set(re.sub(r'[,，\s]','',v) for v in re.findall(r'(?<![\w])\d[\d,.]*%?',evidence))
             numeric_ok=all(re.sub(r'[,，\s]','',v) in source_nums for v in nums)
             supported=bool(a.get('supported')) and len(quote)>=20 and quote in evidence and numeric_ok
-            score=max(0,min(100,int(a.get('score',0)))) if (supported or mode!='Ollama（自建模型）') else 0
+            score=max(0,min(100,int(a.get('score',0)))) if (supported or mode=='免费摘录（无需任何 API Key）') else 0
             region=region_name(a.get('region')) if a.get('region') in REGIONS or a.get('region') in CODE_REGIONS else country_region(a.get('location','')+' '+x['title'])
-            rows.append({'region_code':region_code(region),'region_name_zh':region,'title':str(a.get('title') or x['title']),'date':d,'location':str(a.get('location','')),'tags':str(a.get('tags','')),'summary':str(a.get('summary','')),'url':x['url'],'url_label':urlparse(x['url']).netloc,'icon_img_url':'','score':score,'status':'已核验' if supported else ('待人工审核（免费摘录）' if mode!='Ollama（自建模型）' else '待核验'),'evidence':quote if (supported or mode!='Ollama（自建模型）') else '', 'source_date':d,'source_domain':urlparse(x['url']).netloc,'source_access':doc['access'],'reason':str(a.get('reason','')) if (supported or mode!='Ollama（自建模型）') else '引文无法定位或摘要数字未在原文中匹配','selected':supported and score>=RULES['min_score'],'order':i+1})
+            rows.append({'region_code':region_code(region),'region_name_zh':region,'title':str(a.get('title') or x['title']),'date':d,'location':str(a.get('location','')),'tags':str(a.get('tags','')),'summary':str(a.get('summary','')),'url':x['url'],'url_label':urlparse(x['url']).netloc,'icon_img_url':'','score':score,'status':'已核验' if supported else ('待人工审核（免费摘录）' if mode=='免费摘录（无需任何 API Key）' else '待核验'),'evidence':quote if (supported or mode!='Ollama（自建模型）') else '', 'source_date':d,'source_domain':urlparse(x['url']).netloc,'source_access':doc['access'],'reason':str(a.get('reason','')) if (supported or mode!='Ollama（自建模型）') else '引文无法定位或摘要数字未在原文中匹配','selected':supported and score>=RULES['min_score'],'order':i+1})
         except Exception as e:errors.append(f'AI分析失败 {x["title"][:35]}: {e}')
     # Near-title duplicate filter; preserves candidates for review.
     tokens=set()
@@ -191,7 +191,17 @@ def excel_bytes(df,start,end,issue,original=None,baseline=None):
     """
     master=BASE/'templates/XSTAR_Excel_Master.xlsx'
     if original is None and not master.exists():
-        raise FileNotFoundError('缺少 templates/XSTAR_Excel_Master.xlsx：请上传原版 Excel，或把母版添加到 GitHub。')
+        w=Workbook();w.active.title='news'
+        for j,key in enumerate(COLS,1):w.active.cell(1,j,key)
+        for i,(_,row) in enumerate(df.iterrows(),2):
+            for j,key in enumerate(COLS,1):
+                value=row.get(key,'')
+                if pd.isna(value):value=None
+                if key=='date' and value:
+                    dt=pd.to_datetime(value,errors='coerce')
+                    value=dt.to_pydatetime() if pd.notna(dt) else None
+                w.active.cell(i,j,value)
+        out=io.BytesIO();w.save(out);return out.getvalue()
     template=original if original is not None else master.read_bytes()
     same=False
     if baseline is not None and len(df)==len(baseline):
@@ -308,7 +318,7 @@ with st.sidebar:
     elif mode=='免费摘录（无需任何 API Key）':
         st.caption('免费摘录不调用语言模型，复杂指令和中文摘要需自带 API Key 或 Ollama。')
     load=st.button('📂 加载 Excel 并立即预览',use_container_width=True,disabled=file is None)
-    depth=st.radio('研究深度',['快速研究','深度研究'],horizontal=True,help='快速研究最多16组查询和45篇正文；深度研究使用完整预算。')
+    depth=st.radio('研究深度',['快速研究','深度研究'],horizontal=True,help='快速研究最多24组查询和80篇正文；深度研究使用完整预算。')
     run=st.button('🔎 免费搜索 / 补充研究',type='primary',use_container_width=True)
     st.caption('规则可直接修改 searching_rules/config.json 和 RESEARCH_RULES.md')
 if load and file is not None:
@@ -336,6 +346,8 @@ if run:
             shortlist,reserve=rank_candidates(rows,30)
             st.session_state.reserve_pool=reserve
             rows=shortlist
+            for item in rows:
+                item['selected']=True  # Editorial shortlist, not a claim of verification.
             if 'rows' in st.session_state and len(st.session_state.rows):
                 prior=st.session_state.rows
                 rows_df=pd.DataFrame(rows)
@@ -351,7 +363,8 @@ if run:
         except Exception as e:st.error(f'研究未完成：{e}')
 if 'rows' in st.session_state:
     df=st.session_state.rows
-    st.success(f'当前 {len(df)} 条新闻；已选 {int(df.selected.sum())} 条。可立即预览、修改、下载。')
+    st.success(f'当前精选 {len(df)} 条；其中 {int(df.selected.sum())} 条纳入报告。可通过自然语言修改。')
+    st.warning('自动入选不等于事实核验通过。请检查 status 和原文证据后再发布。')
     if st.session_state.errors:
         with st.expander(f'搜索/分析异常 {len(st.session_state.errors)} 条'):
             st.code('\n'.join(st.session_state.errors[:80]))
@@ -411,6 +424,8 @@ if 'rows' in st.session_state:
         page=report_html(html_rows,e,iss,region_order,read_meta(st.session_state.get('original_xlsx')))
     except Exception as ex:st.error(f'HTML 预览不可用：{ex}')
     st.subheader('3 · Outlook HTML 实时预览')
+    if st.session_state.get('original_xlsx') is None and not (BASE/'templates/XSTAR_Excel_Master.xlsx').exists():
+        st.info('当前 Excel 为简化备用格式。上传原版母版后才能保持原始版式。')
     if page:st.components.v1.html(page,height=720,scrolling=True)
     a,b,c=st.columns(3)
     with a:st.download_button('📊 下载 Excel',xlsx if xlsx is not None else b'',disabled=xlsx is None,file_name=f'XSTAR_news_{s}_{e}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',use_container_width=True)
