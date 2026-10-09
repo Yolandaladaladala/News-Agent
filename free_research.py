@@ -12,7 +12,7 @@ import requests
 from bs4 import BeautifulSoup
 
 HEADERS={"User-Agent":"Mozilla/5.0 (compatible; XSTAR-NewsResearch/2.0; +https://github.com/Yolandaladaladala/News-Agent)"}
-TIMEOUT=18
+TIMEOUT=7
 
 def _unique(rows):
     out=[];seen=set()
@@ -60,13 +60,13 @@ def google_news_rss(query,start,end,num=15):
 def discover(query,start,end,num=15):
     """Fail over between independent free discovery channels."""
     rows=[];errors=[]
-    for name,fn in [("GDELT",gdelt_search),("Google News RSS",google_news_rss)]:
+    for name,fn in [("Google News RSS",google_news_rss),("GDELT",gdelt_search)]:
         try:
             rows.extend(fn(query,start,end,num))
         except Exception as e:
             errors.append(f"{name}: {type(e).__name__}: {str(e)[:160]}")
         if len(_unique(rows))>=num:break
-        time.sleep(0.3)
+        # Only use the slower GDELT fallback if RSS is insufficient.
     return _unique(rows)[:num],errors
 
 def extractive_review(title,text,source_domain,official=False):
