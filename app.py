@@ -67,11 +67,17 @@ def analyze_news(prompt,mode,endpoint,model,api_key="",base_url=""):
 
 
 def country_region(s):
-    s=str(s).lower()
-    rules=[('北美地区','美国 usa united states 加拿大 canada 墨西哥 mexico'),('拉美地区','巴西 brazil 阿根廷 argentina 智利 chile 哥伦比亚 colombia'),('欧洲地区','英国 uk britain 德国 germany 法国 france 欧洲 europe 欧盟 eu 意大利 italy'),('中东地区','中东 middle east 沙特 saudi 阿联酋 uae 伊朗 iran 以色列 israel'),('非洲地区','非洲 africa 南非 south africa 埃及 egypt')]
-    for reg,words in rules:
-        if any(w in s for w in words.split(' ')):return reg
-    return '待分类'
+    """Conservative geographical classification with word boundaries; never infer APAC."""
+    value=str(s or "").lower()
+    groups=[
+        ('北美地区',r'美国|加拿大|墨西哥|\\b(?:united states|usa|u\\.s\\.a\\.|canada|mexico)\\b'),
+        ('拉美地区',r'巴西|阿根廷|智利|哥伦比亚|\\b(?:brazil|argentina|chile|colombia)\\b'),
+        ('欧洲地区',r'英国|德国|法国|欧洲|欧盟|意大利|\\b(?:united kingdom|britain|germany|france|europe|italy|eu)\\b'),
+        ('中东地区',r'中东|沙特|阿联酋|伊朗|以色列|\\b(?:saudi arabia|saudi|uae|iran|israel)\\b'),
+        ('非洲地区',r'非洲|南非|埃及|\\b(?:africa|south africa|egypt)\\b'),
+        ('亚太地区',r'泰国|中国|日本|韩国|新加坡|印尼|印度尼西亚|越南|澳大利亚|菲律宾|马来西亚|\\b(?:thailand|china|japan|south korea|singapore|indonesia|vietnam|australia|philippines|malaysia)\\b|ประเทศไทย|日本|中国|한국|ประเทศไทย')]
+    matches=[name for name,pattern in groups if re.search(pattern,value,re.I)]
+    return matches[0] if len(matches)==1 else '待分类'
 
 def extract_clues(file,txt):
     clues=[x.strip() for x in txt.splitlines() if x.strip()]
