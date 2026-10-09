@@ -385,7 +385,11 @@ if 'rows' in st.session_state:
                         extra,errs,_=research(start,end,additions,mode,endpoint,model,bar,'快速研究',api_key,base_url,target=15)
                         st.session_state.errors=st.session_state.get('errors',[])+errs
                         seen_urls={str(x.get('url')) for x in updated}
-                        updated.extend(x for x in extra if str(x.get('url')) not in seen_urls)
+                        next_id=max((int(x.get('news_id',0)) for x in updated),default=0)+1
+                        for x in extra:
+                            if str(x.get('url')) in seen_urls:continue
+                            x=dict(x);x['news_id']=next_id;next_id+=1
+                            updated.append(x);seen_urls.add(str(x.get('url')))
                         bar.empty()
                     st.session_state.rows=pd.DataFrame(updated)
                     st.success('已应用修改，请审核。')
@@ -403,7 +407,8 @@ if 'rows' in st.session_state:
             st.dataframe(pd.DataFrame(st.session_state.reserve_pool)[['news_id','title','score','status','url']],hide_index=True)
     st.subheader('1 · 新闻研究与编辑')
     st.caption('上传的 Excel 原文、列顺序、meta 与格式不自动改写；编辑内容后仅更新对应新闻单元格。纳入状态只影响 HTML 快报。')
-    if 'news_id' not in df.columns:df=df.copy();df['news_id']=range(1,len(df)+1)
+    if 'news_id' not in df.columns:
+        df=df.copy();df['news_id']=range(1,len(df)+1)
     edited=st.data_editor(df,hide_index=True,num_rows='dynamic',use_container_width=True,key=f"news_editor_{st.session_state.get('editor_version',0)}",column_config={'selected':st.column_config.CheckboxColumn('纳入快报'),'score':st.column_config.NumberColumn('分数',min_value=0,max_value=100),'region_code':st.column_config.SelectboxColumn('地区',options=list(REGION_CODES.values())),'order':st.column_config.NumberColumn('顺序',min_value=0)},disabled=['news_id','source_date','source_access','source_domain'],height=520)
     st.session_state.rows=edited
     st.subheader('2 · 地区顺序')
