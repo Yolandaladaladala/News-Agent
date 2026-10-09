@@ -390,7 +390,7 @@ if run:
 if 'rows' in st.session_state:
     df=st.session_state.rows
     st.success(f'当前精选 {len(df)} 条；其中 {int(df.selected.sum())} 条纳入报告。可通过自然语言修改。')
-    st.warning('未核验、无中文标题或无摘要的新闻不会自动入选。手动勾选前请核实原文。')
+    st.caption('报告只使用已选新闻；研究候选与正式报告分开。')
     if st.session_state.errors:
         with st.expander(f'搜索/分析异常 {len(st.session_state.errors)} 条'):
             st.code('\n'.join(st.session_state.errors[:80]))
@@ -446,7 +446,7 @@ if 'rows' in st.session_state:
     html_rows=pd.concat([selected[selected.region_code==REGION_CODES[r]] for r in region_order],ignore_index=True)
     bad=html_rows[html_rows.apply(lambda r: not str(r.get('title','')).strip() or not re.search(r'[\u4e00-\u9fff]',str(r.get('title',''))) or len(str(r.get('summary','')).strip())<35 or not str(r.get('date','')).strip() or str(r.get('url','')).startswith('https://news.google.com/'),axis=1)]
     publish_ok=bad.empty and not html_rows.empty
-    if not publish_ok:st.warning(f'当前可发布内容不足：{len(bad)} 条缺少必要新闻内容或原文链接。可继续补充研究。')
+    if not publish_ok:st.caption(f'可发布内容尚未准备好：{len(bad)} 条缺少必要字段；可继续补充研究。')
     s,e,iss=st.session_state.range
     # Both report formats are generated from the identical final editorial selection.
     xlsx=None;page=None
