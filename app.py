@@ -87,7 +87,7 @@ def extract_clues(file,txt):
 
 def research(start,end,clues,mode,endpoint,model,progress,depth='快速研究',api_key='',base_url='',target=80):
     fast=depth=='快速研究'
-    maxq=24 if fast else int(RULES.get('max_queries',65))
+    maxq=(min(6,len(clues)*2) if target<80 else 24) if fast else int(RULES.get('max_queries',65))
     reserve=min(int(RULES.get('search_budget',{}).get('reserve_queries_for_gap_search',10)),maxq//3)
     buckets=[list(v) for v in RULES.get('local_queries',{}).values()]
     local=[]
@@ -104,7 +104,7 @@ def research(start,end,clues,mode,endpoint,model,progress,depth='快速研究',a
         for market in ('泰国','美国','中国','新加坡','日本','韩国','印尼','越南'):
             priority.extend(RULES.get('local_queries',{}).get(market,[])[:2])
         broad=priority+core+local
-    all_queries=list(dict.fromkeys(clue_queries+broad))
+    all_queries=list(dict.fromkeys(clue_queries if target<80 and clue_queries else clue_queries+broad))
     primary=all_queries[:maxq-reserve]
     queries=primary+all_queries[maxq-reserve:maxq]
     seen=set(); candidates=[]; errors=[]
@@ -142,7 +142,7 @@ def research(start,end,clues,mode,endpoint,model,progress,depth='快速研究',a
         return (0 if official else 1,-sum(k in (x['title']+' '+x['snippet']).lower() for k in ['loan','credit','bank','auto','vehicle','car','finance','สินเชื่อ','汽车','รถยนต์']))
     candidates.sort(key=rank)
     rows=[]
-    limit=min(len(candidates),max(target,80) if fast else RULES['max_articles_to_review'])
+    limit=min(len(candidates),max(target,80) if fast and target>=80 else (min(25,len(candidates)) if target<80 else RULES['max_articles_to_review']))
     with ThreadPoolExecutor(max_workers=6) as fetch_pool:
         documents=list(fetch_pool.map(lambda item: scrape(item['url']),candidates[:limit]))
     for i,(x,doc) in enumerate(zip(candidates[:limit],documents)):
@@ -156,7 +156,8 @@ def research(start,end,clues,mode,endpoint,model,progress,depth='快速研究',a
             continue
         prompt=f'''根据下方原文判断新闻是否值得进入XSTAR全球汽车金融行业快讯。研究日期 {start} 至 {end}。必须逐字摘取原文中支持核心事件及数字的证据片段（连续20-160字符）。不得使用片段之外的信息。\n评分权重：业务相关性30，行业影响25，来源可信度20，时效性15，可行动性10。\n返回JSON对象字段 title(中文), location(中文国家), region(六区之一), tags(2-3个中文标签用；分隔), summary(中文70-150字), evidence(原文逐字证据), score(0-100整数), reason(简短), supported(boolean)。\n标题:{x['title']}\n来源:{x['url']}\n正文:{evidence}'''
         try:
-            a=analyze_news(prompt,mode,endpoint,model,api_key,base_url)
+            # Keep BYOK spend bounded: AI only analyzes the highest-ranked 30 accessible articles.
+            a=analyze_news(prompt,mode,endpoint,model,api_key,base_url) if (mode=='免费摘录（无需任何 API Key）' or i<30) else None
             if a is None:
                 a=extractive_review(x['title'],evidence,urlparse(x['url']).netloc,
                     any(urlparse(x['url']).netloc.lower().endswith(z) for z in RULES['primary_domains']))
@@ -304,7 +305,7 @@ with st.sidebar:
     issue=st.text_input('期数','第1期')
     file=st.file_uploader('上传原版 Excel（直接预览，保留全部原文和格式）',type=['xlsx'])
     clues_text=st.text_area('可选：粘贴新闻标题或 URL（每行一条）',height=130)
-    st.caption('Excel 上传后直接预览；不调用 AI，不重写任何原文。AI 搜索是独立的补充功能。')
+    st.caption('Excel 上传后直接预览；不调用 AI，不重写任何原文。AI 搜索是独立的补充功能。BYOK 最多分析30篇文章，可能产生模型费用。')
     mode=st.radio('内容处理方式',['免费摘录（无需任何 API Key）','自带 API Key','Ollama（自建模型）'],index=0)
     endpoint='';model='';api_key='';base_url=''
     if mode=='自带 API Key':
