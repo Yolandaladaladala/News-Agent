@@ -12,6 +12,8 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from free_research import discover, extractive_review, ollama_review
+from agent_workflow import rank_candidates, parse_edit_request, apply_editorial_operations
+from model_gateway import chat_json, interpret_edit
 
 BASE=Path(__file__).parent
 RULES=json.loads((BASE/'searching_rules/config.json').read_text(encoding='utf-8'))
@@ -57,7 +59,8 @@ def parse_date(v):
     try:return dtparse.parse(str(v),fuzzy=True).date().isoformat()
     except Exception:return ''
 
-def analyze_news(prompt,mode,endpoint,model):
+def analyze_news(prompt,mode,endpoint,model,api_key="",base_url=""):
+    if mode=="自带 API Key":return chat_json(prompt,api_key,model,base_url)
     if mode=="Ollama（自建模型）":
         return ollama_review(prompt,endpoint,model)
     return None
@@ -82,9 +85,9 @@ def extract_clues(file,txt):
             if title and title.lower()!='nan':clues.append(title);old.append(title)
     return list(dict.fromkeys(clues)),old
 
-def research(start,end,clues,mode,endpoint,model,progress,depth='快速研究'):
+def research(start,end,clues,mode,endpoint,model,progress,depth='快速研究',api_key='',base_url='',target=80):
     fast=depth=='快速研究'
-    maxq=16 if fast else int(RULES.get('max_queries',65))
+    maxq=24 if fast else int(RULES.get('max_queries',65))
     reserve=min(int(RULES.get('search_budget',{}).get('reserve_queries_for_gap_search',10)),maxq//3)
     buckets=[list(v) for v in RULES.get('local_queries',{}).values()]
     local=[]
@@ -139,10 +142,12 @@ def research(start,end,clues,mode,endpoint,model,progress,depth='快速研究'):
         return (0 if official else 1,-sum(k in (x['title']+' '+x['snippet']).lower() for k in ['loan','credit','bank','auto','vehicle','car','finance','สินเชื่อ','汽车','รถยนต์']))
     candidates.sort(key=rank)
     rows=[]
-    limit=min(len(candidates),45 if fast else RULES['max_articles_to_review'])
-    for i,x in enumerate(candidates[:limit]):
-        progress.progress(.35+.65*(i+1)/max(1,limit),text=f'访问原文并分析 {i+1}/{limit}')
-        doc=scrape(x['url']); d=parse_date(doc['date'])
+    limit=min(len(candidates),max(target,80) if fast else RULES['max_articles_to_review'])
+    with ThreadPoolExecutor(max_workers=6) as fetch_pool:
+        documents=list(fetch_pool.map(lambda item: scrape(item['url']),candidates[:limit]))
+    for i,(x,doc) in enumerate(zip(candidates[:limit],documents)):
+        progress.progress(.35+.65*(i+1)/max(1,limit),text=f'分析新闻 {i+1}/{limit}')
+        d=parse_date(doc['date'])
         # Search snippet date is not sufficiently authoritative for auto-selection.
         valid_date=bool(d and start.isoformat()<=d<=end.isoformat())
         evidence=doc['text'][:10500]
@@ -151,7 +156,7 @@ def research(start,end,clues,mode,endpoint,model,progress,depth='快速研究'):
             continue
         prompt=f'''根据下方原文判断新闻是否值得进入XSTAR全球汽车金融行业快讯。研究日期 {start} 至 {end}。必须逐字摘取原文中支持核心事件及数字的证据片段（连续20-160字符）。不得使用片段之外的信息。\n评分权重：业务相关性30，行业影响25，来源可信度20，时效性15，可行动性10。\n返回JSON对象字段 title(中文), location(中文国家), region(六区之一), tags(2-3个中文标签用；分隔), summary(中文70-150字), evidence(原文逐字证据), score(0-100整数), reason(简短), supported(boolean)。\n标题:{x['title']}\n来源:{x['url']}\n正文:{evidence}'''
         try:
-            a=analyze_news(prompt,mode,endpoint,model)
+            a=analyze_news(prompt,mode,endpoint,model,api_key,base_url)
             if a is None:
                 a=extractive_review(x['title'],evidence,urlparse(x['url']).netloc,
                     any(urlparse(x['url']).netloc.lower().endswith(z) for z in RULES['primary_domains']))
@@ -290,14 +295,18 @@ with st.sidebar:
     file=st.file_uploader('上传原版 Excel（直接预览，保留全部原文和格式）',type=['xlsx'])
     clues_text=st.text_area('可选：粘贴新闻标题或 URL（每行一条）',height=130)
     st.caption('Excel 上传后直接预览；不调用 AI，不重写任何原文。AI 搜索是独立的补充功能。')
-    mode=st.radio('内容处理方式',['免费摘录（无需任何 API Key）','Ollama（自建模型）'],index=0)
-    endpoint='';model=''
+    mode=st.radio('内容处理方式',['免费摘录（无需任何 API Key）','自带 API Key','Ollama（自建模型）'],index=0)
+    endpoint='';model='';api_key='';base_url=''
+    if mode=='自带 API Key':
+        base_url=st.text_input('OpenAI 兼容 API Base URL',value='https://openrouter.ai/api/v1')
+        api_key=st.text_input('你的 API Key（不保存）',type='password')
+        model=st.text_input('模型 ID',value='openai/gpt-4o-mini')
     if mode=='Ollama（自建模型）':
         endpoint=st.text_input('Ollama 服务地址',value='',placeholder='https://your-private-ollama-host')
         model=st.text_input('Ollama 模型名称',value='qwen2.5:7b')
         st.warning('云端 Streamlit 无法访问你电脑上的 localhost。请使用自己管理的可访问模型服务，并做好认证与访问控制。')
-    else:
-        st.caption('无需 Serper/OpenRouter。使用 GDELT + Google News RSS 发现新闻，提取原文供人工核验；不自动生成中文摘要。')
+    elif mode=='免费摘录（无需任何 API Key）':
+        st.caption('免费摘录不调用语言模型，复杂指令和中文摘要需自带 API Key 或 Ollama。')
     load=st.button('📂 加载 Excel 并立即预览',use_container_width=True,disabled=file is None)
     depth=st.radio('研究深度',['快速研究','深度研究'],horizontal=True,help='快速研究最多16组查询和45篇正文；深度研究使用完整预算。')
     run=st.button('🔎 免费搜索 / 补充研究',type='primary',use_container_width=True)
@@ -317,11 +326,16 @@ if load and file is not None:
 if run:
     if start>end:st.error('开始日期不能晚于结束日期')
     elif mode=='Ollama（自建模型）' and not endpoint:st.error('请填写 Ollama 服务地址')
+    elif mode=='自带 API Key' and not api_key:st.error('请填写 API Key')
     else:
         try:
             clues,old=extract_clues(file,clues_text)
             bar=st.progress(0,text='准备搜索')
-            rows,errors,n=research(start,end,clues,mode,endpoint,model,bar,depth)
+            rows,errors,n=research(start,end,clues,mode,endpoint,model,bar,depth,api_key,base_url)
+            st.session_state.candidate_pool=rows
+            shortlist,reserve=rank_candidates(rows,30)
+            st.session_state.reserve_pool=reserve
+            rows=shortlist
             if 'rows' in st.session_state and len(st.session_state.rows):
                 prior=st.session_state.rows
                 rows_df=pd.DataFrame(rows)
@@ -341,9 +355,42 @@ if 'rows' in st.session_state:
     if st.session_state.errors:
         with st.expander(f'搜索/分析异常 {len(st.session_state.errors)} 条'):
             st.code('\n'.join(st.session_state.errors[:80]))
+    st.subheader('自然语言修改与补充')
+    instruction=st.text_area('例如：删除3、7；补充泰国央行汽车金融新闻；把第5条标题改成……',key='edit_instruction')
+    if st.button('应用修改指令'):
+        if instruction.strip():
+            try:
+                current=st.session_state.rows.to_dict('records')
+                for i,row in enumerate(current,1):row.setdefault('news_id',i)
+                if mode=='自带 API Key' and api_key:
+                    plan=interpret_edit(instruction,current,api_key,model,base_url)
+                    updated=apply_editorial_operations(current,plan.get('operations',[]))
+                    additions=plan.get('research_requests',[])
+                    if additions:
+                        bar=st.progress(0,text='仅搜索补充线索')
+                        extra,errs,_=research(start,end,additions,mode,endpoint,model,bar,'快速研究',api_key,base_url,target=15)
+                        st.session_state.errors=st.session_state.get('errors',[])+errs
+                        seen_urls={str(x.get('url')) for x in updated}
+                        updated.extend(x for x in extra if str(x.get('url')) not in seen_urls)
+                        bar.empty()
+                    st.session_state.rows=pd.DataFrame(updated)
+                    st.success('已应用修改，请审核。')
+                else:
+                    plan=parse_edit_request(instruction,current)
+                    if plan['action']=='delete':
+                        st.session_state.rows=pd.DataFrame(plan['rows'],columns=st.session_state.rows.columns)
+                        st.success('已删除：'+str(plan['ids']))
+                    else:st.warning(plan['message'])
+                st.session_state.editor_version=st.session_state.get('editor_version',0)+1
+                st.rerun()
+            except Exception as ex:st.error(f'修改失败：{ex}')
+    if st.session_state.get('reserve_pool'):
+        with st.expander('查看未入选候选'):
+            st.dataframe(pd.DataFrame(st.session_state.reserve_pool)[['news_id','title','score','status','url']],hide_index=True)
     st.subheader('1 · 新闻研究与编辑')
     st.caption('上传的 Excel 原文、列顺序、meta 与格式不自动改写；编辑内容后仅更新对应新闻单元格。纳入状态只影响 HTML 快报。')
-    edited=st.data_editor(df,hide_index=True,num_rows='dynamic',use_container_width=True,key=f"news_editor_{st.session_state.get('editor_version',0)}",column_config={'selected':st.column_config.CheckboxColumn('纳入快报'),'score':st.column_config.NumberColumn('分数',min_value=0,max_value=100),'region_code':st.column_config.SelectboxColumn('地区',options=list(REGION_CODES.values())),'order':st.column_config.NumberColumn('顺序',min_value=0)},disabled=['source_date','source_access','source_domain'],height=520)
+    if 'news_id' not in df.columns:df=df.copy();df['news_id']=range(1,len(df)+1)
+    edited=st.data_editor(df,hide_index=True,num_rows='dynamic',use_container_width=True,key=f"news_editor_{st.session_state.get('editor_version',0)}",column_config={'selected':st.column_config.CheckboxColumn('纳入快报'),'score':st.column_config.NumberColumn('分数',min_value=0,max_value=100),'region_code':st.column_config.SelectboxColumn('地区',options=list(REGION_CODES.values())),'order':st.column_config.NumberColumn('顺序',min_value=0)},disabled=['news_id','source_date','source_access','source_domain'],height=520)
     st.session_state.rows=edited
     st.subheader('2 · 地区顺序')
     region_order=st.multiselect('按选择顺序显示地区',REGIONS,default=REGIONS)
