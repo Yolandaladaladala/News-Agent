@@ -1,0 +1,25 @@
+{
+ "regions": ["北美地区", "亚太地区", "中东地区", "欧洲地区", "拉美地区", "非洲地区"],
+ "topics": ["auto loans vehicle financing credit dealer floorplan financing interest rates defaults", "Thailand auto loans household debt Bank of Thailand car sales financing", "automotive production investment sales recalls tariffs EV batteries", "central bank monetary policy inflation consumer lending banking", "robotics physical AI autonomous driving automotive semiconductor"],
+ "local_queries": {
+  "泰国": ["สินเชื่อรถยนต์ หนี้ครัวเรือน ธนาคารแห่งประเทศไทย", "ยอดขายรถยนต์ สภาอุตสาหกรรม สินเชื่อเช่าซื้อ"],
+  "中国": ["汽车金融 车贷 银行 新能源汽车 出口 工信部 央行"],
+  "日本": ["自動車 ローン 金利 販売 トヨタ 日銀"],
+  "韩国": ["자동차 할부금융 대출 한국은행 현대차"],
+  "越南": ["tín dụng ô tô ngân hàng doanh số xe"],
+  "印尼": ["kredit kendaraan pembiayaan mobil Bank Indonesia"],
+  "德国": ["Autokredit Zulassungen Automobilindustrie Bundesbank"],
+  "法国": ["crédit automobile ventes voitures Banque de France"],
+  "墨西哥": ["crédito automotriz producción exportación INEGI"],
+  "巴西": ["financiamento de veículos Banco Central vendas automóveis"],
+  "中东": ["تمويل السيارات البنك المركزي أسعار الفائدة"],
+  "美国": ["auto loan delinquency Federal Reserve CFPB vehicle financing"],
+  "新加坡": ["MAS car loan vehicle financing COE Singapore"]
+ },
+ "primary_domains": ["bot.or.th", "mas.gov.sg", "federalreserve.gov", "consumerfinance.gov", "sec.gov", "bankofengland.co.uk", "ecb.europa.eu", "rba.gov.au", "boj.or.jp", "bsp.gov.ph", "bi.go.id", "sbv.gov.vn", "pbc.gov.cn", "oica.net", "acea.auto", "inegi.org.mx", "reuters.com", "apnews.com", "channelnewsasia.com"],
+ "min_score": 70,
+ "max_queries": 28,
+ "results_per_query": 10,
+ "max_articles_to_review": 65,
+ "max_report_items": 30
+}
