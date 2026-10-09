@@ -1,4 +1,4 @@
-import io, json, os, re, time, html, hashlib
+import io, json, re, time, html, hashlib
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
@@ -7,22 +7,24 @@ import requests
 import streamlit as st
 from bs4 import BeautifulSoup
 from dateutil import parser as dtparse
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 BASE=Path(__file__).parent
 RULES=json.loads((BASE/'searching_rules/config.json').read_text(encoding='utf-8'))
 REGIONS=RULES['regions']
+REGION_CODES={'北美地区':'NA','亚太地区':'APAC','中东地区':'ME','欧洲地区':'EU','拉美地区':'LATAM','非洲地区':'AFR'}
+CODE_REGIONS={v:k for k,v in REGION_CODES.items()}
+def region_name(value):
+    return CODE_REGIONS.get(str(value).strip(),str(value).strip() if str(value).strip() in REGIONS else '亚太地区')
+def region_code(value):
+    return REGION_CODES.get(region_name(value),'APAC')
 COLS=['region_code','region_name_zh','title','date','location','tags','summary','url','url_label','icon_img_url']
 AUDIT=['score','status','evidence','source_date','source_domain','source_access','reason','selected','order']
 st.set_page_config(page_title='XSTAR News Research Agent',layout='wide',page_icon='📰')
 st.title('XSTAR · 全球汽车行业新闻研究 Agent')
 st.caption('日期 / 可选线索 → 多语言搜索 → 原文核验 → AI评分 → 编辑 → Excel + Outlook HTML')
-
-def secret(name,default=''):
-    try: return st.secrets.get(name,os.getenv(name,default))
-    except Exception: return os.getenv(name,default)
 
 def serper(query,start,end,key,num=10):
     r=requests.post('https://google.serper.dev/search',headers={'X-API-KEY':key,'Content-Type':'application/json'},json={'q':f'{query} after:{start.isoformat()} before:{(end+timedelta(days=1)).isoformat()}','num':num},timeout=25)
@@ -88,7 +90,9 @@ def research(start,end,clues,serper_key,ai_key,model,progress):
     for country,qs in RULES['local_queries'].items():
         queries.extend(qs)
     for clue in clues:queries.append(clue[:110])
-    queries=queries[:RULES['max_queries']]
+    # All user-provided leads are searched first; topic/local queries are round-robin interleaved.
+    core=list(RULES['topics']); local=[q for qs in RULES['local_queries'].values() for q in qs]
+    queries=list(dict.fromkeys([x[:110] for x in clues]+[v for pair in __import__('itertools').zip_longest(core,local) for v in pair if v]))[:RULES['max_queries']]
     seen=set(); candidates=[]; errors=[]
     for i,q in enumerate(queries):
         progress.progress((i+1)/max(1,len(queries))*0.35,text=f'多语言搜索 {i+1}/{len(queries)} · {q[:38]}')
@@ -101,7 +105,8 @@ def research(start,end,clues,serper_key,ai_key,model,progress):
     # Search rank can be noisy; prioritize accessible official sources without excluding other credible media.
     def rank(x):
         d=urlparse(x['url']).netloc.lower()
-        return (0 if any(d.endswith(z) for z in RULES['primary_domains']) else 1, -sum(k in (x['title']+' '+x['snippet']).lower() for k in ['loan','credit','bank','auto','vehicle','car','finance','สินเชื่อ','汽车','รถยนต์']))
+        official=any(d==z or d.endswith('.'+z) for z in RULES['primary_domains'])
+        return (0 if official else 1,-sum(k in (x['title']+' '+x['snippet']).lower() for k in ['loan','credit','bank','auto','vehicle','car','finance','สินเชื่อ','汽车','รถยนต์']))
     candidates.sort(key=rank)
     rows=[]
     limit=min(len(candidates),RULES['max_articles_to_review'])
@@ -112,7 +117,7 @@ def research(start,end,clues,serper_key,ai_key,model,progress):
         valid_date=bool(d and start.isoformat()<=d<=end.isoformat())
         evidence=doc['text'][:10500]
         if len(evidence)<350 or not valid_date or doc['access']!='accessible':
-            rows.append({'region_code':country_region(x['title']),'region_name_zh':'','title':x['title'],'date':d,'location':'','tags':'','summary':x['snippet'],'url':x['url'],'url_label':urlparse(x['url']).netloc,'icon_img_url':'','score':0,'status':'待核验','evidence':'','source_date':d,'source_domain':urlparse(x['url']).netloc,'source_access':doc['access'],'reason':'原文日期缺失/超范围或正文不可访问','selected':False,'order':i+1})
+            rows.append({'region_code':region_code(country_region(x['title'])),'region_name_zh':country_region(x['title']),'title':x['title'],'date':d,'location':'','tags':'','summary':x['snippet'],'url':x['url'],'url_label':urlparse(x['url']).netloc,'icon_img_url':'','score':0,'status':'待核验','evidence':'','source_date':d,'source_domain':urlparse(x['url']).netloc,'source_access':doc['access'],'reason':'原文日期缺失/超范围或正文不可访问','selected':False,'order':i+1})
             continue
         prompt=f'''根据下方原文判断新闻是否值得进入XSTAR全球汽车金融行业快讯。研究日期 {start} 至 {end}。必须逐字摘取原文中支持核心事件及数字的证据片段（连续20-160字符）。不得使用片段之外的信息。\n评分权重：业务相关性30，行业影响25，来源可信度20，时效性15，可行动性10。\n返回JSON对象字段 title(中文), location(中文国家), region(六区之一), tags(2-3个中文标签用；分隔), summary(中文70-150字), evidence(原文逐字证据), score(0-100整数), reason(简短), supported(boolean)。\n标题:{x['title']}\n来源:{x['url']}\n正文:{evidence}'''
         try:
@@ -120,8 +125,8 @@ def research(start,end,clues,serper_key,ai_key,model,progress):
             quote=str(a.get('evidence','')).strip()
             supported=bool(a.get('supported')) and len(quote)>=20 and quote in evidence
             score=max(0,min(100,int(a.get('score',0)))) if supported else 0
-            region=a.get('region') if a.get('region') in REGIONS else country_region(a.get('location','')+' '+x['title'])
-            rows.append({'region_code':region,'region_name_zh':str(a.get('location','')),'title':str(a.get('title') or x['title']),'date':d,'location':str(a.get('location','')),'tags':str(a.get('tags','')),'summary':str(a.get('summary','')),'url':x['url'],'url_label':urlparse(x['url']).netloc,'icon_img_url':'','score':score,'status':'已核验' if supported else '待核验','evidence':quote if supported else '', 'source_date':d,'source_domain':urlparse(x['url']).netloc,'source_access':doc['access'],'reason':str(a.get('reason','')) if supported else 'AI证据无法在原文定位','selected':supported and score>=RULES['min_score'],'order':i+1})
+            region=region_name(a.get('region')) if a.get('region') in REGIONS or a.get('region') in CODE_REGIONS else country_region(a.get('location','')+' '+x['title'])
+            rows.append({'region_code':region_code(region),'region_name_zh':region,'title':str(a.get('title') or x['title']),'date':d,'location':str(a.get('location','')),'tags':str(a.get('tags','')),'summary':str(a.get('summary','')),'url':x['url'],'url_label':urlparse(x['url']).netloc,'icon_img_url':'','score':score,'status':'已核验' if supported else '待核验','evidence':quote if supported else '', 'source_date':d,'source_domain':urlparse(x['url']).netloc,'source_access':doc['access'],'reason':str(a.get('reason','')) if supported else 'AI证据无法在原文定位','selected':supported and score>=RULES['min_score'],'order':i+1})
         except Exception as e:errors.append(f'AI分析失败 {x["title"][:35]}: {e}')
     # Near-title duplicate filter; preserves candidates for review.
     tokens=set()
@@ -133,47 +138,131 @@ def research(start,end,clues,serper_key,ai_key,model,progress):
     for r in chosen[RULES['max_report_items']:]:r['selected']=False
     return rows,errors,len(candidates)
 
-def excel_bytes(df,start,end,issue):
-    w=Workbook();m=w.active;m.title='meta';m.append(['key','value'])
-    for k,v in [('report_title','全球汽车行业快讯'),('report_date',f'{end.year}年{end.month}月'),('report_issue',issue),('preheader','全球汽车金融、行业及宏观重要动态'),('last_updated',str(date.today()))]:m.append([k,v])
-    s=w.create_sheet('news');s.append(COLS)
-    for _,r in df.iterrows():s.append([str(r.get(k,'') or '') for k in COLS])
-    for sheet in (m,s):
-        sheet.freeze_panes='A2';sheet.auto_filter.ref=sheet.dimensions
-        for c in sheet[1]:c.fill=PatternFill('solid',fgColor='16233B');c.font=Font(bold=True,color='FFFFFF')
-    widths=[16,16,55,16,18,25,95,58,22,24]
-    for j,v in enumerate(widths,1):s.column_dimensions[get_column_letter(j)].width=v
-    for row in s.iter_rows(min_row=2):
-        for cell in row:cell.alignment=Alignment(vertical='top',wrap_text=cell.column in (3,7))
+def excel_bytes(df,start,end,issue,original=None,baseline=None):
+    """Never rebuild the user's Excel. Preserve the original OOXML bytes if unchanged.
+    On edits, change only the news cell values in a copy of the original workbook;
+    preserve all untouched text, formatting, dimensions, meta and other worksheets.
+    """
+    template=original or (BASE/'templates/XSTAR_Excel_Master.xlsx').read_bytes()
+    same=False
+    if baseline is not None and len(df)==len(baseline):
+        def normalized(d):
+            return [[str(v) if pd.notna(v) else '' for v in row] for row in d[COLS].itertuples(index=False,name=None)]
+        same=normalized(df)==normalized(baseline)
+    if same:return template
+    w=load_workbook(io.BytesIO(template))
+    sh=w['news']
+    header={str(c.value):c.column for c in sh[1] if c.value is not None}
+    if any(k not in header for k in COLS):raise ValueError('范本缺少必要的 news 列')
+    original_count=len(baseline) if baseline is not None else sh.max_row-1
+    # Preserve template styles, column widths, merged ranges, hyperlinks, row heights.
+    from copy import copy
+    template_row=2
+    for i,(_,r) in enumerate(df.iterrows(),2):
+        if i>sh.max_row:
+            sh.row_dimensions[i].height=sh.row_dimensions[template_row].height
+            for j in range(1,sh.max_column+1):
+                src=sh.cell(template_row,j);dst=sh.cell(i,j)
+                if src.has_style:dst._style=copy(src._style)
+                dst.alignment=copy(src.alignment)
+                dst.protection=copy(src.protection)
+        for k in COLS:
+            cell=sh.cell(i,header[k]);value=r.get(k,'')
+            if k=='date':
+                parsed=pd.to_datetime(value,errors='coerce')
+                value=parsed.to_pydatetime() if pd.notna(parsed) else None
+            elif pd.isna(value):value=None
+            if cell.value!=value:cell.value=value
+    # Clear only old news values, without deleting rows or their styles.
+    for i in range(len(df)+2,max(original_count+2,sh.max_row+1)):
+        for k in COLS:sh.cell(i,header[k]).value=None
     out=io.BytesIO();w.save(out);return out.getvalue()
 
-def report_html(df,end,issue,order):
+def imported_rows(file):
+    data=file.getvalue();xls=pd.ExcelFile(io.BytesIO(data))
+    sheet=next((x for x in xls.sheet_names if x.lower()=='news'),None)
+    if not sheet:raise ValueError('上传的 Excel 必须包含 news Sheet')
+    df=pd.read_excel(io.BytesIO(data),sheet_name=sheet,dtype=object)
+    missing=[x for x in COLS if x not in df.columns]
+    if missing:raise ValueError('缺少列：'+', '.join(missing))
+    df=df[COLS].copy().fillna('')
+    df['date']=df['date'].apply(lambda x:pd.to_datetime(x,errors='coerce').strftime('%Y-%m-%d') if pd.notna(pd.to_datetime(x,errors='coerce')) else '')
+    for k in AUDIT:
+        df[k]=False if k=='selected' else (0 if k=='score' else '')
+    df['selected']=True  # Imported editorial selection is preserved for preview, not AI-verified.
+    df['status']='导入原稿（未自动核验）'
+    df['order']=range(1,len(df)+1)
+    return df,data
+
+def report_html(df,end,issue,order,meta=None):
+    """Render the user's own Outlook generator markup, including VML tags."""
     E=lambda x:html.escape(str(x if pd.notna(x) else ''),quote=True)
-    blocks=[]
+    meta=meta or {}
+    def date_str(v):
+        if isinstance(v,(datetime,date)):return v.strftime('%Y年%m月%d日')
+        try:return pd.to_datetime(v).strftime('%Y年%m月%d日')
+        except:return str(v or '')
+    sections=[]
     for region in order:
-        part=df[df.region_code==region]
+        part=df[df.region_code.apply(region_name)==region]
         if part.empty:continue
-        blocks.append(f'<tr><td style="padding:18px 26px 6px"><div style="font:700 16px Arial;color:#111827">🌍 {E(region)}</div></td></tr>')
+        cards=[]
         for _,r in part.iterrows():
-            tags=' '.join(f'<span style="display:inline-block;background:#e8f5e9;color:#2e7d32;border-radius:999px;padding:2px 8px;margin-right:4px">{E(t)}</span>' for t in re.split('[,，；;]',str(r.get('tags',''))) if t.strip())
-            url=str(r.get('url',''));link=f'<a href="{E(url)}" style="display:inline-block;background:#2563eb;color:white;text-decoration:none;padding:8px 12px;border-radius:9px;font-size:12px" target="_blank">🔗 查看原文 ({E(r.get("url_label","原文"))})</a>' if url.startswith(('https://','http://')) else ''
-            blocks.append(f'''<tr><td style="padding:10px 26px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:12px"><tr><td style="padding:14px"><div style="font:700 14px/1.5 Arial;color:#111827">{E(r.get('title',''))}</div><div style="font:12px/1.8 Arial;color:#6b7280;margin:8px 0">📍 {E(r.get('location',''))} | 📅 {E(r.get('date',''))} | {tags}</div><p style="font:13px/1.7 Arial;color:#374151;margin:8px 0 12px">{E(r.get('summary',''))}</p>{link}</td></tr></table></td></tr>''')
-    return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>全球汽车行业快讯</title></head><body style="margin:0;background:#f4f6f8"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 12px"><table role="presentation" width="680" cellpadding="0" cellspacing="0" style="max-width:680px;background:white;border-radius:16px"><tr><td style="padding:26px;background:#111827;color:white;text-align:center"><div style="font:700 28px Arial">全球汽车行业快讯</div><div style="font:14px Arial;color:#cbd5e1;margin-top:8px">📅 {end.year}年{end.month}月 | {E(issue)}</div></td></tr>{''.join(blocks)}<tr><td style="padding:18px 26px 26px;font:11px Arial;color:#9ca3af">最后更新：{date.today()}</td></tr></table></td></tr></table></body></html>'''
+            tags=str(r.get('tags','') or '')
+            pills=[]
+            for t in re.split(r'[,，；;]',tags):
+                t=t.strip()
+                if not t:continue
+                w=min(160,max(40,7*len(t)+22))
+                bg,fg='#e8f5e9','#2e7d32'
+                pills.append(f'<!--[if mso]><v:roundrect arcsize="50%" stroked="f" fillcolor="{bg}" style="height:18px;v-text-anchor:middle;width:{w}px;display:inline-block;vertical-align:middle;"><w:anchorlock/><center style="color:{fg};font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:18px;">{E(t)}</center></v:roundrect><![endif]--><!--[if !mso]><!----><span style="display:inline-block;vertical-align:middle;padding:0 8px;border-radius:999px;background:{bg};color:{fg};font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:18px;">{E(t)}</span><!--<![endif]-->')
+            metadata=' | '.join(x for x in [f'<span>📍 {E(r.get("location",""))}</span>' if str(r.get('location','')).strip() else '',f'<span>📅 {E(date_str(r.get("date","")))}</span>' if str(r.get('date','')).strip() else '', ' '.join(pills)] if x)
+            url=str(r.get('url','')).strip()
+            link=f'<a href="{E(url)}" style="display:inline-block;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.4;text-decoration:none;background:#2563EB;color:#ffffff;padding:8px 12px;border-radius:10px;" target="_blank">🔗 查看原文 ({E(r.get("url_label","原文"))})</a>' if url.startswith(('https://','http://')) else ''
+            cards.append(f'<tr><td style="padding:10px 26px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border:1px solid #e5e7eb;border-radius:12px;"><tr><td style="padding:14px 14px 6px 14px;"><div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;font-weight:700;color:#111827;margin:0;">{E(r.get("title",""))}</div><div style="margin-top:8px;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6;color:#6b7280;">{metadata}</div></td></tr><tr><td style="padding:8px 14px 8px 14px;"><p style="margin:0 0 10px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.7;color:#374151;">{E(r.get("summary",""))}</p></td></tr><tr><td style="padding:0 14px 14px 14px;">{link}</td></tr></table></td></tr>')
+        sections.append(f'<tr><td style="padding:18px 26px 6px 26px;"><div style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.4;font-weight:700;color:#111827;margin:0;">🌍 {E(region)}</div></td></tr>'+''.join(cards))
+    tpl=(BASE/'templates/HTML_Reference.html').read_text(encoding='utf-8')
+    for k,v in {'REPORT_TITLE':meta.get('report_title','全球汽车行业快讯'),'REPORT_DATE':meta.get('report_date',f'{end.year}年{end.month}月'),'REPORT_ISSUE':meta.get('report_issue',issue),'PREHEADER':meta.get('preheader',''),'LAST_UPDATED':meta.get('last_updated',date.today().isoformat()),'REGION_SECTIONS':''.join(sections)}.items():
+        tpl=tpl.replace('{{'+k+'}}',E(v) if k!='REGION_SECTIONS' else v)
+    return tpl
+
+def read_meta(data):
+    if not data:return {}
+    try:
+        w=load_workbook(io.BytesIO(data),read_only=True,data_only=True)
+        if 'meta' not in w.sheetnames:return {}
+        sh=w['meta'];pairs={str(r[0]).strip():r[1] for r in sh.iter_rows(min_row=1,max_col=2,values_only=True) if r[0] is not None}
+        return {k:str(pairs[k]) for k in ['report_title','report_date','report_issue','preheader','last_updated'] if k in pairs and pairs[k] is not None}
+    except Exception:return {}
 
 with st.sidebar:
     st.header('研究设置')
     start=st.date_input('开始日期',date.today()-timedelta(days=14))
     end=st.date_input('结束日期',date.today())
     issue=st.text_input('期数','第1期')
-    file=st.file_uploader('可选：上传新闻 Excel 作为研究线索',type=['xlsx'])
+    file=st.file_uploader('上传原版 Excel（直接预览，保留全部原文和格式）',type=['xlsx'])
     clues_text=st.text_area('可选：粘贴新闻标题或 URL（每行一条）',height=130)
-    st.caption('不上传文件也能从零研究；上传内容不会直接当成事实。')
-    with st.expander('API 设置（也可使用 Streamlit Secrets）'):
-        sk=st.text_input('Serper API Key',value=secret('SERPER_API_KEY'),type='password')
-        ak=st.text_input('OpenRouter API Key',value=secret('OPENROUTER_API_KEY'),type='password')
-        model=st.text_input('OpenRouter Model',value=secret('OPENROUTER_MODEL','openai/gpt-4o-mini'))
-    run=st.button('🔎 开始研究',type='primary',use_container_width=True)
+    st.caption('Excel 上传后直接预览；不调用 AI，不重写任何原文。AI 搜索是独立的补充功能。')
+    with st.expander('🔑 API Keys（每位使用者输入自己的密钥；不保存）', expanded=True):
+        sk=st.text_input('Serper API Key',value='', key='user_serper_key',type='password')
+        ak=st.text_input('OpenRouter API Key',value='', key='user_openrouter_key',type='password')
+        model=st.text_input('OpenRouter Model',value='openai/gpt-4o-mini')
+    st.caption('API Key 只用于本次会话的搜索请求，不会写入 Excel、HTML 或日志。请勿分享自己的 Key。')
+    load=st.button('📂 加载 Excel 并立即预览',use_container_width=True,disabled=file is None)
+    run=st.button('🔎 AI 搜索 / 补充研究',type='primary',use_container_width=True)
     st.caption('规则可直接修改 searching_rules/config.json 和 RESEARCH_RULES.md')
+if load and file is not None:
+    try:
+        loaded,original=imported_rows(file)
+        st.session_state.rows=loaded
+        st.session_state.original_xlsx=original
+        st.session_state.original_rows=loaded[COLS].copy(deep=True)
+        st.session_state.errors=[]
+        st.session_state.found=len(loaded)
+        st.session_state.range=(start,end,issue)
+        st.session_state.editor_version=st.session_state.get('editor_version',0)+1
+        st.success(f'已载入 {len(loaded)} 条新闻。无需 API，可直接预览和下载。')
+    except Exception as e:st.error(f'Excel 载入失败：{e}')
 if run:
     if start>end:st.error('开始日期不能晚于结束日期')
     elif not sk or not ak:st.error('请配置 Serper 和 OpenRouter API Key')
@@ -182,7 +271,14 @@ if run:
             clues,old=extract_clues(file,clues_text)
             bar=st.progress(0,text='准备搜索')
             rows,errors,n=research(start,end,clues,sk,ak,model,bar)
-            st.session_state.rows=pd.DataFrame(rows)
+            if 'rows' in st.session_state and len(st.session_state.rows):
+                prior=st.session_state.rows
+                rows_df=pd.DataFrame(rows)
+                combined=pd.concat([prior,rows_df],ignore_index=True)
+                combined=combined.drop_duplicates(subset=['url'],keep='first')
+                st.session_state.rows=combined
+            else:st.session_state.rows=pd.DataFrame(rows)
+            st.session_state.editor_version=st.session_state.get('editor_version',0)+1
             st.session_state.errors=errors
             st.session_state.found=n
             st.session_state.range=(start,end,issue)
@@ -190,13 +286,13 @@ if run:
         except Exception as e:st.error(f'研究未完成：{e}')
 if 'rows' in st.session_state:
     df=st.session_state.rows
-    st.success(f'检索到 {st.session_state.found} 个独立 URL；审核 {len(df)} 篇；自动精选 {int(df.selected.sum())} 篇。')
+    st.success(f'当前 {len(df)} 条新闻；已选 {int(df.selected.sum())} 条。可立即预览、修改、下载。')
     if st.session_state.errors:
         with st.expander(f'搜索/分析异常 {len(st.session_state.errors)} 条'):
             st.code('\n'.join(st.session_state.errors[:80]))
     st.subheader('1 · 新闻研究与编辑')
-    st.caption('可编辑标题、地区、日期、摘要、标签、链接、分数、纳入状态和排序。未核验新闻默认不选入。')
-    edited=st.data_editor(df,hide_index=True,num_rows='dynamic',use_container_width=True,key='news_editor',column_config={'selected':st.column_config.CheckboxColumn('纳入快报'),'score':st.column_config.NumberColumn('分数',min_value=0,max_value=100),'region_code':st.column_config.SelectboxColumn('地区',options=REGIONS),'order':st.column_config.NumberColumn('顺序',min_value=0)},disabled=['source_date','source_access','source_domain'],height=520)
+    st.caption('上传的 Excel 原文、列顺序、meta 与格式不自动改写；编辑内容后仅更新对应新闻单元格。纳入状态只影响 HTML 快报。')
+    edited=st.data_editor(df,hide_index=True,num_rows='dynamic',use_container_width=True,key=f"news_editor_{st.session_state.get('editor_version',0)}",column_config={'selected':st.column_config.CheckboxColumn('纳入快报'),'score':st.column_config.NumberColumn('分数',min_value=0,max_value=100),'region_code':st.column_config.SelectboxColumn('地区',options=list(REGION_CODES.values())),'order':st.column_config.NumberColumn('顺序',min_value=0)},disabled=['source_date','source_access','source_domain'],height=520)
     st.session_state.rows=edited
     st.subheader('2 · 地区顺序')
     region_order=st.multiselect('按选择顺序显示地区',REGIONS,default=REGIONS)
@@ -204,10 +300,13 @@ if 'rows' in st.session_state:
     selected=edited[edited['selected'].fillna(False).astype(bool)].copy()
     selected['order']=pd.to_numeric(selected['order'],errors='coerce').fillna(9999)
     selected=selected.sort_values('order')
-    selected['region_code']=selected['region_code'].where(selected['region_code'].isin(REGIONS),'亚太地区')
-    selected=pd.concat([selected[selected.region_code==r] for r in region_order],ignore_index=True)
+    selected['region_code']=selected['region_code'].apply(region_code)
+    html_rows=pd.concat([selected[selected.region_code==REGION_CODES[r]] for r in region_order],ignore_index=True)
     s,e,iss=st.session_state.range
-    xlsx=excel_bytes(selected,s,e,iss);page=report_html(selected,e,iss,region_order)
+    # Excel retains the user's original news text, rows, metadata, and formatting.
+    # Inclusion/order only control the HTML, unless actual news cell text is edited.
+    xlsx=excel_bytes(edited,s,e,iss,st.session_state.get('original_xlsx'),st.session_state.get('original_rows'))
+    page=report_html(html_rows,e,iss,region_order,read_meta(st.session_state.get('original_xlsx')))
     st.subheader('3 · Outlook HTML 实时预览')
     st.components.v1.html(page,height=720,scrolling=True)
     a,b,c=st.columns(3)
@@ -215,4 +314,4 @@ if 'rows' in st.session_state:
     with b:st.download_button('📧 下载 HTML 快报',page,file_name=f'全球汽车行业快讯_{e}.html',mime='text/html',use_container_width=True)
     with c:st.download_button('🔍 下载全部研究审计 CSV',edited.to_csv(index=False).encode('utf-8-sig'),file_name=f'XSTAR_audit_{e}.csv',mime='text/csv',use_container_width=True)
 else:
-    st.info('输入日期即可从零搜索；Excel 和新闻列表均为可选。搜索需要真实 API Key。')
+    st.info('上传 Excel 后点击「加载 Excel 并立即预览」，不需要 API；或者填写日期，点击「AI 搜索 / 补充研究」。')
