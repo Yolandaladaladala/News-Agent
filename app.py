@@ -148,6 +148,14 @@ def research(start,end,clues,mode,endpoint,model,progress,depth='快速研究',a
     dedup={}
     for x in candidates:dedup.setdefault(x['url'].split('?')[0],x)
     candidates=list(dedup.values())
+    # Prioritize configured authoritative publisher domains over discovery rank.
+    tiers=RULES.get('source_hierarchy',{})
+    def source_tier(item):
+        host=(urlparse(item['url']).hostname or '').lower()
+        for level,key in enumerate(('tier_1_primary','tier_2_established_media','tier_3_specialist_media')):
+            if any(host==d or host.endswith('.'+d) for d in tiers.get(key,[])):return level
+        return 3
+    candidates.sort(key=lambda item:(source_tier(item),rank(item)))
     rows=[]
     limit=min(len(candidates),max(target,80) if fast and target>=80 else (min(25,len(candidates)) if target<80 else RULES['max_articles_to_review']))
     with ThreadPoolExecutor(max_workers=6) as fetch_pool:
@@ -351,7 +359,10 @@ if run:
             bar=st.progress(0,text='准备搜索')
             rows,errors,n=research(start,end,clues,mode,endpoint,model,bar,depth,api_key,base_url)
             st.session_state.candidate_pool=rows
-            shortlist,reserve=rank_candidates(rows,30)
+            # Only polished Chinese and evidence-backed articles can become the report shortlist.
+            eligible=[x for x in rows if x.get('status')=='已核验' and re.search(r'[\u4e00-\u9fff]',str(x.get('title',''))) and len(str(x.get('summary','')).strip())>=35]
+            shortlist,reserve=rank_candidates(eligible,30)
+            reserve+= [x for x in rows if x not in eligible]
             st.session_state.reserve_pool=reserve
             rows=shortlist
             # Never auto-publish unverified or untranslated search results.
