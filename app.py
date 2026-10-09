@@ -1,4 +1,5 @@
 import io, json, re, time, html, hashlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
@@ -81,8 +82,9 @@ def extract_clues(file,txt):
             if title and title.lower()!='nan':clues.append(title);old.append(title)
     return list(dict.fromkeys(clues)),old
 
-def research(start,end,clues,mode,endpoint,model,progress):
-    maxq=int(RULES.get('max_queries',65))
+def research(start,end,clues,mode,endpoint,model,progress,depth='快速研究'):
+    fast=depth=='快速研究'
+    maxq=16 if fast else int(RULES.get('max_queries',65))
     reserve=min(int(RULES.get('search_budget',{}).get('reserve_queries_for_gap_search',10)),maxq//3)
     buckets=[list(v) for v in RULES.get('local_queries',{}).values()]
     local=[]
@@ -93,6 +95,12 @@ def research(start,end,clues,mode,endpoint,model,progress):
     broad=[v for pair in __import__('itertools').zip_longest(core,local) for v in pair if v]
     direct_urls=[str(x).strip() for x in clues if str(x).strip().startswith(('https://','http://'))]
     clue_queries=[str(x).strip()[:150] for x in clues if str(x).strip() and not str(x).strip().startswith(('https://','http://'))]
+    # Put XSTAR priority markets first instead of spreading the first 16 queries thinly.
+    if fast:
+        priority=[]
+        for market in ('泰国','美国','中国','新加坡','日本','韩国','印尼','越南'):
+            priority.extend(RULES.get('local_queries',{}).get(market,[])[:2])
+        broad=priority+core+local
     all_queries=list(dict.fromkeys(clue_queries+broad))
     primary=all_queries[:maxq-reserve]
     queries=primary+all_queries[maxq-reserve:maxq]
@@ -103,16 +111,26 @@ def research(start,end,clues,mode,endpoint,model,progress):
             seen.add(key);candidates.append({'title':url,'url':url,'snippet':'','date_hint':''})
     if len(all_queries)>maxq:
         errors.append(f'搜索预算上限 {maxq} 次，剩余 {len(all_queries)-maxq} 个查询未执行。')
-    for i,q in enumerate(queries):
-        stage='多语言发现' if i<len(primary) else '补充搜索'
-        progress.progress((i+1)/max(1,len(queries))*0.35,text=f'{stage} {i+1}/{len(queries)} · {q[:38]}')
+    # Small worker pool speeds up independent RSS queries without a 65-request wait.
+    # GDELT is fallback only; free providers may still throttle.
+    def search_task(item):
+        i,q=item
         try:
-            found,discovery_errors=search_news(q,start,end,RULES['results_per_query'])
-            errors.extend(f'{q[:30]}: {err}' for err in discovery_errors)
+            found,errs=search_news(q,start,end,RULES['results_per_query'])
+            return i,q,found,errs
+        except Exception as exc:
+            return i,q,[],[str(exc)]
+    with ThreadPoolExecutor(max_workers=3 if fast else 2) as pool:
+        futures={pool.submit(search_task,item):item for item in enumerate(queries)}
+        for done,future in enumerate(as_completed(futures),1):
+            i,q,found,errs=future.result()
+            progress.progress(done/max(1,len(queries))*0.35,
+                              text=f'新闻发现 {done}/{len(queries)} · {q[:32]}')
+            errors.extend(f'{q[:30]}: {err}' for err in errs)
             for x in found:
                 key=x['url'].split('?')[0].rstrip('/')
-                if key and key not in seen:seen.add(key);candidates.append(x)
-        except Exception as e:errors.append(f'搜索失败 {q[:40]}: {e}')
+                if key and key not in seen:
+                    seen.add(key);candidates.append(x)
     if not candidates:raise RuntimeError('免费新闻源没有返回结果。请缩短日期范围、减少搜索词，或稍后重试。')
     # Search rank can be noisy; prioritize accessible official sources without excluding other credible media.
     def rank(x):
@@ -121,7 +139,7 @@ def research(start,end,clues,mode,endpoint,model,progress):
         return (0 if official else 1,-sum(k in (x['title']+' '+x['snippet']).lower() for k in ['loan','credit','bank','auto','vehicle','car','finance','สินเชื่อ','汽车','รถยนต์']))
     candidates.sort(key=rank)
     rows=[]
-    limit=min(len(candidates),RULES['max_articles_to_review'])
+    limit=min(len(candidates),45 if fast else RULES['max_articles_to_review'])
     for i,x in enumerate(candidates[:limit]):
         progress.progress(.35+.65*(i+1)/max(1,limit),text=f'访问原文并分析 {i+1}/{limit}')
         doc=scrape(x['url']); d=parse_date(doc['date'])
@@ -281,6 +299,7 @@ with st.sidebar:
     else:
         st.caption('无需 Serper/OpenRouter。使用 GDELT + Google News RSS 发现新闻，提取原文供人工核验；不自动生成中文摘要。')
     load=st.button('📂 加载 Excel 并立即预览',use_container_width=True,disabled=file is None)
+    depth=st.radio('研究深度',['快速研究','深度研究'],horizontal=True,help='快速研究最多16组查询和45篇正文；深度研究使用完整预算。')
     run=st.button('🔎 免费搜索 / 补充研究',type='primary',use_container_width=True)
     st.caption('规则可直接修改 searching_rules/config.json 和 RESEARCH_RULES.md')
 if load and file is not None:
@@ -302,7 +321,7 @@ if run:
         try:
             clues,old=extract_clues(file,clues_text)
             bar=st.progress(0,text='准备搜索')
-            rows,errors,n=research(start,end,clues,mode,endpoint,model,bar)
+            rows,errors,n=research(start,end,clues,mode,endpoint,model,bar,depth)
             if 'rows' in st.session_state and len(st.session_state.rows):
                 prior=st.session_state.rows
                 rows_df=pd.DataFrame(rows)
