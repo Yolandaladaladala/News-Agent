@@ -157,9 +157,10 @@ def research(start,end,clues,mode,endpoint,model,progress,depth='快速研究',a
         return 3
     candidates.sort(key=lambda item:(source_tier(item),rank(item)))
     rows=[]
-    limit=min(len(candidates),max(target,80) if fast and target>=80 else (min(25,len(candidates)) if target<80 else RULES['max_articles_to_review']))
+    limit=min(len(candidates),80 if fast and target>=80 else (25 if target<80 else RULES['max_articles_to_review']))
     with ThreadPoolExecutor(max_workers=6) as fetch_pool:
         documents=list(fetch_pool.map(lambda item: scrape(item['url']),candidates[:limit]))
+    model_calls=0
     for i,(x,doc) in enumerate(zip(candidates[:limit],documents)):
         progress.progress(.35+.65*(i+1)/max(1,limit),text=f'分析新闻 {i+1}/{limit}')
         d=parse_date(doc['date'])
@@ -171,8 +172,12 @@ def research(start,end,clues,mode,endpoint,model,progress,depth='快速研究',a
             continue
         prompt=f'''根据下方原文判断新闻是否值得进入XSTAR全球汽车金融行业快讯。研究日期 {start} 至 {end}。必须逐字摘取原文中支持核心事件及数字的证据片段（连续20-160字符）。不得使用片段之外的信息。\n评分权重：业务相关性30，行业影响25，来源可信度20，时效性15，可行动性10。\n返回JSON对象字段 title(中文), location(中文国家), region(六区之一), tags(2-3个中文标签用；分隔), summary(中文70-150字), evidence(原文逐字证据), score(0-100整数), reason(简短), supported(boolean)。\n标题:{x['title']}\n来源:{x['url']}\n正文:{evidence}'''
         try:
-            # Keep BYOK spend bounded: AI only analyzes the highest-ranked 30 accessible articles.
-            a=analyze_news(prompt,mode,endpoint,model,api_key,base_url) if (mode=='免费摘录（无需任何 API Key）' or i<30) else None
+            # Model budget is based on accessible dated articles, not their position among failed fetches.
+            if mode!='免费摘录（无需任何 API Key）' and model_calls<45:
+                model_calls+=1
+                a=analyze_news(prompt,mode,endpoint,model,api_key,base_url)
+            else:
+                a=None
             if a is None:
                 a=extractive_review(x['title'],evidence,urlparse(x['url']).netloc,
                     any(urlparse(x['url']).netloc.lower().endswith(z) for z in RULES['primary_domains']))
@@ -185,8 +190,8 @@ def research(start,end,clues,mode,endpoint,model,progress,depth='快速研究',a
             nums=re.findall(r'(?<![\w])\d[\d,.]*%?',summary)
             source_nums=set(re.sub(r'[,，\s]','',v) for v in re.findall(r'(?<![\w])\d[\d,.]*%?',evidence))
             numeric_ok=all(re.sub(r'[,，\s]','',v) in source_nums for v in nums)
-            supported=bool(a.get('supported')) and len(quote)>=20 and quote in evidence and numeric_ok
-            score=max(0,min(100,int(a.get('score',0)))) if (supported or mode=='免费摘录（无需任何 API Key）') else 0
+            supported=bool(a.get('supported')) and len(quote)>=20 and quote in evidence and numeric_ok and bool(re.search(r'[\u4e00-\u9fff]',str(a.get('title','')))) and len(summary.strip())>=35
+            score=max(0,min(100,int(a.get('score',0)))) if supported else 0
             region=region_name(a.get('region')) if a.get('region') in REGIONS or a.get('region') in CODE_REGIONS else country_region(a.get('location','')+' '+x['title'])
             rows.append({'region_code':region_code(region),'region_name_zh':region,'title':str(a.get('title') or x['title']),'date':d,'location':str(a.get('location','')),'tags':str(a.get('tags','')),'summary':str(a.get('summary','')),'url':x['url'],'url_label':urlparse(x['url']).netloc,'icon_img_url':'','score':score,'status':'已核验' if supported else ('待人工审核（免费摘录）' if mode=='免费摘录（无需任何 API Key）' else '待核验'),'evidence':quote if (supported or mode!='Ollama（自建模型）') else '', 'source_date':d,'source_domain':urlparse(x['url']).netloc,'source_access':doc['access'],'reason':str(a.get('reason','')) if (supported or mode!='Ollama（自建模型）') else '引文无法定位或摘要数字未在原文中匹配','selected':supported and score>=RULES['min_score'],'order':i+1})
         except Exception as e:errors.append(f'AI分析失败 {x["title"][:35]}: {e}')
@@ -320,7 +325,7 @@ with st.sidebar:
     issue=st.text_input('期数','第1期')
     file=st.file_uploader('上传原版 Excel（直接预览，保留全部原文和格式）',type=['xlsx'])
     clues_text=st.text_area('可选：粘贴新闻标题或 URL（每行一条）',height=130)
-    st.caption('Excel 上传后直接预览；不调用 AI，不重写任何原文。AI 搜索是独立的补充功能。BYOK 最多分析30篇文章，可能产生模型费用。')
+    st.caption('上传 Excel 可离线预览。AI 模式最多分析45篇有效原文；使用自带 Key 可能产生模型费用。')
     mode=st.radio('内容处理方式',['免费摘录（无需任何 API Key）','自带 API Key','Ollama（自建模型）'],index=0)
     endpoint='';model='';api_key='';base_url=''
     if mode=='自带 API Key':
@@ -335,7 +340,7 @@ with st.sidebar:
         st.caption('免费摘录不调用语言模型，复杂指令和中文摘要需自带 API Key 或 Ollama。')
     load=st.button('📂 加载 Excel 并立即预览',use_container_width=True,disabled=file is None)
     depth=st.radio('研究深度',['快速研究','深度研究'],horizontal=True,help='快速研究最多24组查询和80篇正文；深度研究使用完整预算。')
-    run=st.button('🔎 免费搜索 / 补充研究',type='primary',use_container_width=True)
+    run=st.button('🔎 开始新闻研究',type='primary',use_container_width=True)
     st.caption('规则可直接修改 searching_rules/config.json 和 RESEARCH_RULES.md')
 if load and file is not None:
     try:
@@ -437,11 +442,10 @@ if 'rows' in st.session_state:
     publish_ok=bad.empty and not html_rows.empty
     if not publish_ok:st.warning(f'当前可发布内容不足：{len(bad)} 条缺少必要新闻内容或原文链接。可继续补充研究。')
     s,e,iss=st.session_state.range
-    # Excel retains the user's original news text, rows, metadata, and formatting.
-    # Inclusion/order only control the HTML, unless actual news cell text is edited.
+    # Both report formats are generated from the identical final editorial selection.
     xlsx=None;page=None
     try:
-        xlsx=excel_bytes(edited,s,e,iss,st.session_state.get('original_xlsx'),st.session_state.get('original_rows'))
+        xlsx=excel_bytes(html_rows,s,e,iss,st.session_state.get('original_xlsx'),None)
     except Exception as ex:st.error(f'Excel 导出不可用：{ex}')
     try:
         if publish_ok:page=report_html(html_rows,e,iss,region_order,read_meta(st.session_state.get('original_xlsx')))
