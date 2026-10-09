@@ -82,20 +82,33 @@ def extract_clues(file,txt):
         for _,r in df.iterrows():
             title=str(r.get('title','')).strip()
             if title and title.lower()!='nan':clues.append(title);old.append(title)
-    return clues[:35],old
+    return list(dict.fromkeys(clues)),old
 
 def research(start,end,clues,serper_key,ai_key,model,progress):
-    queries=[]
-    for q in RULES['topics']:queries.append(q)
-    for country,qs in RULES['local_queries'].items():
-        queries.extend(qs)
-    for clue in clues:queries.append(clue[:110])
-    # All user-provided leads are searched first; topic/local queries are round-robin interleaved.
-    core=list(RULES['topics']); local=[q for qs in RULES['local_queries'].values() for q in qs]
-    queries=list(dict.fromkeys([x[:110] for x in clues]+[v for pair in __import__('itertools').zip_longest(core,local) for v in pair if v]))[:RULES['max_queries']]
+    maxq=int(RULES.get('max_queries',65))
+    reserve=min(int(RULES.get('search_budget',{}).get('reserve_queries_for_gap_search',10)),maxq//3)
+    buckets=[list(v) for v in RULES.get('local_queries',{}).values()]
+    local=[]
+    while any(buckets):
+        for bucket in buckets:
+            if bucket:local.append(bucket.pop(0))
+    core=list(RULES.get('topics',[]))
+    broad=[v for pair in __import__('itertools').zip_longest(core,local) for v in pair if v]
+    direct_urls=[str(x).strip() for x in clues if str(x).strip().startswith(('https://','http://'))]
+    clue_queries=[str(x).strip()[:150] for x in clues if str(x).strip() and not str(x).strip().startswith(('https://','http://'))]
+    all_queries=list(dict.fromkeys(clue_queries+broad))
+    primary=all_queries[:maxq-reserve]
+    queries=primary+all_queries[maxq-reserve:maxq]
     seen=set(); candidates=[]; errors=[]
+    for url in direct_urls:
+        key=url.split('?')[0].rstrip('/')
+        if key and key not in seen:
+            seen.add(key);candidates.append({'title':url,'url':url,'snippet':'','date_hint':''})
+    if len(all_queries)>maxq:
+        errors.append(f'搜索预算上限 {maxq} 次，剩余 {len(all_queries)-maxq} 个查询未执行。')
     for i,q in enumerate(queries):
-        progress.progress((i+1)/max(1,len(queries))*0.35,text=f'多语言搜索 {i+1}/{len(queries)} · {q[:38]}')
+        stage='多语言发现' if i<len(primary) else '补充搜索'
+        progress.progress((i+1)/max(1,len(queries))*0.35,text=f'{stage} {i+1}/{len(queries)} · {q[:38]}')
         try:
             for x in serper(q,start,end,serper_key,RULES['results_per_query']):
                 key=x['url'].split('?')[0].rstrip('/')
@@ -123,10 +136,14 @@ def research(start,end,clues,serper_key,ai_key,model,progress):
         try:
             a=ai_json(prompt,ai_key,model)
             quote=str(a.get('evidence','')).strip()
-            supported=bool(a.get('supported')) and len(quote)>=20 and quote in evidence
+            summary=str(a.get('summary',''))
+            nums=re.findall(r'(?<![\w])\d[\d,.]*%?',summary)
+            source_nums=set(re.sub(r'[,，\s]','',v) for v in re.findall(r'(?<![\w])\d[\d,.]*%?',evidence))
+            numeric_ok=all(re.sub(r'[,，\s]','',v) in source_nums for v in nums)
+            supported=bool(a.get('supported')) and len(quote)>=20 and quote in evidence and numeric_ok
             score=max(0,min(100,int(a.get('score',0)))) if supported else 0
             region=region_name(a.get('region')) if a.get('region') in REGIONS or a.get('region') in CODE_REGIONS else country_region(a.get('location','')+' '+x['title'])
-            rows.append({'region_code':region_code(region),'region_name_zh':region,'title':str(a.get('title') or x['title']),'date':d,'location':str(a.get('location','')),'tags':str(a.get('tags','')),'summary':str(a.get('summary','')),'url':x['url'],'url_label':urlparse(x['url']).netloc,'icon_img_url':'','score':score,'status':'已核验' if supported else '待核验','evidence':quote if supported else '', 'source_date':d,'source_domain':urlparse(x['url']).netloc,'source_access':doc['access'],'reason':str(a.get('reason','')) if supported else 'AI证据无法在原文定位','selected':supported and score>=RULES['min_score'],'order':i+1})
+            rows.append({'region_code':region_code(region),'region_name_zh':region,'title':str(a.get('title') or x['title']),'date':d,'location':str(a.get('location','')),'tags':str(a.get('tags','')),'summary':str(a.get('summary','')),'url':x['url'],'url_label':urlparse(x['url']).netloc,'icon_img_url':'','score':score,'status':'已核验' if supported else '待核验','evidence':quote if supported else '', 'source_date':d,'source_domain':urlparse(x['url']).netloc,'source_access':doc['access'],'reason':str(a.get('reason','')) if supported else '引文无法定位或摘要数字未在原文中匹配','selected':supported and score>=RULES['min_score'],'order':i+1})
         except Exception as e:errors.append(f'AI分析失败 {x["title"][:35]}: {e}')
     # Near-title duplicate filter; preserves candidates for review.
     tokens=set()
@@ -143,7 +160,10 @@ def excel_bytes(df,start,end,issue,original=None,baseline=None):
     On edits, change only the news cell values in a copy of the original workbook;
     preserve all untouched text, formatting, dimensions, meta and other worksheets.
     """
-    template=original or (BASE/'templates/XSTAR_Excel_Master.xlsx').read_bytes()
+    master=BASE/'templates/XSTAR_Excel_Master.xlsx'
+    if original is None and not master.exists():
+        raise FileNotFoundError('缺少 templates/XSTAR_Excel_Master.xlsx：请上传原版 Excel，或把母版添加到 GitHub。')
+    template=original if original is not None else master.read_bytes()
     same=False
     if baseline is not None and len(df)==len(baseline):
         def normalized(d):
@@ -221,7 +241,10 @@ def report_html(df,end,issue,order,meta=None):
             link=f'<a href="{E(url)}" style="display:inline-block;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.4;text-decoration:none;background:#2563EB;color:#ffffff;padding:8px 12px;border-radius:10px;" target="_blank">🔗 查看原文 ({E(r.get("url_label","原文"))})</a>' if url.startswith(('https://','http://')) else ''
             cards.append(f'<tr><td style="padding:10px 26px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border:1px solid #e5e7eb;border-radius:12px;"><tr><td style="padding:14px 14px 6px 14px;"><div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;font-weight:700;color:#111827;margin:0;">{E(r.get("title",""))}</div><div style="margin-top:8px;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6;color:#6b7280;">{metadata}</div></td></tr><tr><td style="padding:8px 14px 8px 14px;"><p style="margin:0 0 10px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.7;color:#374151;">{E(r.get("summary",""))}</p></td></tr><tr><td style="padding:0 14px 14px 14px;">{link}</td></tr></table></td></tr>')
         sections.append(f'<tr><td style="padding:18px 26px 6px 26px;"><div style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.4;font-weight:700;color:#111827;margin:0;">🌍 {E(region)}</div></td></tr>'+''.join(cards))
-    tpl=(BASE/'templates/HTML_Reference.html').read_text(encoding='utf-8')
+    html_path=BASE/'templates/HTML_Reference.html'
+    if not html_path.exists():
+        raise FileNotFoundError('缺少 templates/HTML_Reference.html')
+    tpl=html_path.read_text(encoding='utf-8')
     for k,v in {'REPORT_TITLE':meta.get('report_title','全球汽车行业快讯'),'REPORT_DATE':meta.get('report_date',f'{end.year}年{end.month}月'),'REPORT_ISSUE':meta.get('report_issue',issue),'PREHEADER':meta.get('preheader',''),'LAST_UPDATED':meta.get('last_updated',date.today().isoformat()),'REGION_SECTIONS':''.join(sections)}.items():
         tpl=tpl.replace('{{'+k+'}}',E(v) if k!='REGION_SECTIONS' else v)
     return tpl
@@ -305,13 +328,18 @@ if 'rows' in st.session_state:
     s,e,iss=st.session_state.range
     # Excel retains the user's original news text, rows, metadata, and formatting.
     # Inclusion/order only control the HTML, unless actual news cell text is edited.
-    xlsx=excel_bytes(edited,s,e,iss,st.session_state.get('original_xlsx'),st.session_state.get('original_rows'))
-    page=report_html(html_rows,e,iss,region_order,read_meta(st.session_state.get('original_xlsx')))
+    xlsx=None;page=None
+    try:
+        xlsx=excel_bytes(edited,s,e,iss,st.session_state.get('original_xlsx'),st.session_state.get('original_rows'))
+    except Exception as ex:st.error(f'Excel 导出不可用：{ex}')
+    try:
+        page=report_html(html_rows,e,iss,region_order,read_meta(st.session_state.get('original_xlsx')))
+    except Exception as ex:st.error(f'HTML 预览不可用：{ex}')
     st.subheader('3 · Outlook HTML 实时预览')
-    st.components.v1.html(page,height=720,scrolling=True)
+    if page:st.components.v1.html(page,height=720,scrolling=True)
     a,b,c=st.columns(3)
-    with a:st.download_button('📊 下载 Excel',xlsx,file_name=f'XSTAR_news_{s}_{e}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',use_container_width=True)
-    with b:st.download_button('📧 下载 HTML 快报',page,file_name=f'全球汽车行业快讯_{e}.html',mime='text/html',use_container_width=True)
+    with a:st.download_button('📊 下载 Excel',xlsx if xlsx is not None else b'',disabled=xlsx is None,file_name=f'XSTAR_news_{s}_{e}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',use_container_width=True)
+    with b:st.download_button('📧 下载 HTML 快报',page or '',disabled=page is None,file_name=f'全球汽车行业快讯_{e}.html',mime='text/html',use_container_width=True)
     with c:st.download_button('🔍 下载全部研究审计 CSV',edited.to_csv(index=False).encode('utf-8-sig'),file_name=f'XSTAR_audit_{e}.csv',mime='text/csv',use_container_width=True)
 else:
     st.info('上传 Excel 后点击「加载 Excel 并立即预览」，不需要 API；或者填写日期，点击「AI 搜索 / 补充研究」。')
