@@ -7,12 +7,33 @@ import re
 import time
 import html
 from datetime import timedelta
-from urllib.parse import urlparse, urlencode, quote
+from urllib.parse import urlparse, urlencode, quote, parse_qs, unquote
 import requests
 from bs4 import BeautifulSoup
 
 HEADERS={"User-Agent":"Mozilla/5.0 (compatible; XSTAR-NewsResearch/2.0; +https://github.com/Yolandaladaladala/News-Agent)"}
 TIMEOUT=7
+
+def publisher_url(url):
+    """Resolve aggregator links to publisher pages. Unresolved links are not publishable."""
+    url=str(url or "").strip()
+    if not url.startswith(("https://","http://")):return ""
+    host=(urlparse(url).hostname or "").lower()
+    if host not in ("news.google.com","google.com","www.google.com"):return url
+    qs=parse_qs(urlparse(url).query)
+    for key in ("url","u","q"):
+        for candidate in qs.get(key,[]):
+            candidate=unquote(candidate)
+            if candidate.startswith(("https://","http://")) and "google.com" not in (urlparse(candidate).hostname or ""):
+                return candidate
+    try:
+        r=requests.get(url,headers=HEADERS,timeout=TIMEOUT,allow_redirects=True,stream=True)
+        target=r.url
+        r.close()
+        if (urlparse(target).hostname or "").lower() not in ("news.google.com","google.com","www.google.com"):
+            return target
+    except requests.RequestException:pass
+    return ""
 
 def _unique(rows):
     out=[];seen=set()
@@ -60,13 +81,13 @@ def google_news_rss(query,start,end,num=15):
 def discover(query,start,end,num=15):
     """Fail over between independent free discovery channels."""
     rows=[];errors=[]
-    for name,fn in [("Google News RSS",google_news_rss),("GDELT",gdelt_search)]:
+    for name,fn in [("GDELT",gdelt_search),("Google News RSS",google_news_rss)]:
         try:
             rows.extend(fn(query,start,end,num))
         except Exception as e:
             errors.append(f"{name}: {type(e).__name__}: {str(e)[:160]}")
         if len(_unique(rows))>=num:break
-        # Only use the slower GDELT fallback if RSS is insufficient.
+        # Google News is only a discovery fallback; resolve links before publication.
     return _unique(rows)[:num],errors
 
 def extractive_review(title,text,source_domain,official=False):
