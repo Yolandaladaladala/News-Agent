@@ -1,32 +1,27 @@
-# XSTAR Global Automotive News Agent
+# XSTAR Global Automotive News Agent — Keyless Research
 
-Streamlit entrypoint: `app.py`. This repository is the only target for these changes.
+**No Serper or OpenRouter keys required.** The default research mode uses public GDELT DOC API and Google News RSS for discovery, requests the original article, and requires a publication date in the requested interval. The app preserves candidate rows for human review; it does not claim that RSS snippets or automated excerpts are fully verified.
 
-## Inputs
-- Required: start date and end date for research.
-- Optional: upload an existing XSTAR Excel workbook with `meta` and `news` sheets.
-- Optional: paste one headline, article URL, WeChat article, Xiaohongshu lead, or industry report clue per line.
-- Optional: issue label.
-- API research only: each user enters their own Serper and OpenRouter API keys in the Streamlit sidebar.
+## Use
+1. Open the Streamlit app and choose start/end dates.
+2. Optionally upload your reference Excel or paste article titles/URLs.
+3. Keep **免费摘录（无需任何 API Key）** and click **免费搜索 / 补充研究**.
+4. Review candidates and their original URLs, publication dates, evidence, access status and scores. **Select** verified articles manually; the free mode does not invent Chinese summaries or automatically approve extracted claims.
+5. Edit Chinese titles, tags and summaries in the data editor. Preview and export Outlook HTML and Excel.
 
-## Modes
-1. **Excel-only**: Upload Excel, click **加载 Excel 并立即预览**, edit news, preview HTML, export Excel and HTML. No API key is required.
-2. **AI research**: Select dates, optionally add clues or Excel, enter your own keys, click **AI 搜索 / 补充研究**, review evidence and candidate selection, export.
-3. **Human editorial review**: News without verifiable source dates or locatable evidence remains unselected by default. User-imported news is preserved, but is not automatically AI-verified.
+## Optional local AI
+Choose **Ollama（自建模型）** and supply the URL of your own securely hosted Ollama server and model name. It calls Ollama `/api/chat` with JSON output. It does not use OpenRouter or Serper. Streamlit Cloud cannot access your laptop's `localhost` Ollama; a reachable private service is necessary. Do not publicly expose an unauthenticated Ollama endpoint.
 
 ## Files
-- `app.py`: Streamlit app, research, editing, preview and export.
-- `searching_rules/config.json`: research settings.
-- `searching_rules/RESEARCH_RULES.md`: editorial requirements.
-- `templates/HTML_Reference.html`: HTML structure used by the app.
-- `templates/XSTAR_Excel_Master.xlsx`: **required for Excel export when no workbook was uploaded**. Upload the original XSTAR workbook here to preserve its existing format.
+- `app.py`: Streamlit app and export UI
+- `free_research.py`: free GDELT and Google News RSS discovery; deterministic fallback; optional Ollama
+- `searching_rules/config.json`: topics, markets, source hierarchy and search budgets
+- `searching_rules/RESEARCH_RULES.md`: editorial rules
+- `templates/HTML_Reference.html`: Outlook-compatible base HTML
+- `templates/XSTAR_Excel_Master.xlsx`: required for exporting Excel when the user did not upload an original Excel. **This binary template must be uploaded manually to the repository.**
 
-## Important limitations
-- The HTML reference is an Outlook-compatible baseline, **not a pixel-identical reproduction of an original report**. The original Outlook HTML generator needs a dedicated regression test before exact-match claims.
-- Source numeric matching is only a conservative validation gate, not independent fact-checking.
-- Search coverage is limited by indexing, paywalls, access restrictions and API budget.
-- A complete live research and Outlook rendering acceptance test requires real user API credentials and a reference HTML artifact.
-- Never commit API keys or put them in Streamlit Secrets for a bring-your-own-key deployment.
-
-## Deployment
-Streamlit Community Cloud → repository `Yolandaladaladala/News-Agent` → branch `main` → entrypoint `app.py`. Keep `requirements.txt` at repository root.
+## Limitations
+- Free sources can throttle requests, omit local-language news or redirect to inaccessible publisher pages. Results are not exhaustive.
+- Extractive fallback is not a full LLM. It cannot guarantee Chinese translation, independently validate figures or replace human editorial review.
+- This repository's current HTML reference is not proven pixel-identical to the supplied XSTAR Outlook example. The original HTML template and a visual regression test are still needed.
+- Never commit API keys, private model credentials, or paid article content.
