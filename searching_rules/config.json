@@ -1,28 +1,7 @@
-{
- "regions": ["北美地区", "亚太地区", "中东地区", "欧洲地区", "拉美地区", "非洲地区"],
- "topics": ["auto loans vehicle financing credit dealer floorplan financing interest rates defaults", "Thailand auto loans household debt Bank of Thailand car sales financing", "automotive production investment sales recalls tariffs EV batteries", "central bank monetary policy inflation consumer lending banking", "robotics physical AI autonomous driving automotive semiconductor"],
- "local_queries": {
-  "泰国": ["สินเชื่อรถยนต์ หนี้ครัวเรือน ธนาคารแห่งประเทศไทย", "ยอดขายรถยนต์ สภาอุตสาหกรรม สินเชื่อเช่าซื้อ"],
-  "中国": ["汽车金融 车贷 银行 新能源汽车 出口 工信部 央行"],
-  "日本": ["自動車 ローン 金利 販売 トヨタ 日銀"],
-  "韩国": ["자동차 할부금융 대출 한국은행 현대차"],
-  "越南": ["tín dụng ô tô ngân hàng doanh số xe"],
-  "印尼": ["kredit kendaraan pembiayaan mobil Bank Indonesia"],
-  "德国": ["Autokredit Zulassungen Automobilindustrie Bundesbank"],
-  "法国": ["crédit automobile ventes voitures Banque de France"],
-  "墨西哥": ["crédito automotriz producción exportación INEGI"],
-  "巴西": ["financiamento de veículos Banco Central vendas automóveis"],
-  "中东": ["تمويل السيارات البنك المركزي أسعار الفائدة"],
-  "美国": ["auto loan delinquency Federal Reserve CFPB vehicle financing"],
-  "新加坡": ["MAS car loan vehicle financing COE Singapore"]
- },
- "primary_domains": ["bot.or.th", "mas.gov.sg", "federalreserve.gov", "consumerfinance.gov", "sec.gov", "bankofengland.co.uk", "ecb.europa.eu", "rba.gov.au", "boj.or.jp", "bsp.gov.ph", "bi.go.id", "sbv.gov.vn", "pbc.gov.cn", "oica.net", "acea.auto", "inegi.org.mx", "reuters.com", "apnews.com", "channelnewsasia.com"],
-   "min_score": 75,
-  "max_queries": 65,
-  "results_per_query": 10,
-  "max_articles_to_review": 120,
-  "max_report_items": 30,
 
+{
+  "version": "3.0",
+  "project": "XSTAR Loan News Agent",
   "research_strategy": {
     "mode": "multi_pass",
     "passes": [
@@ -35,39 +14,400 @@
     "query_generation": "dynamic",
     "prioritize_user_clues": true,
     "require_local_language_search": true,
-    "allow_supplementary_queries": true
+    "allow_supplementary_queries": true,
+    "date_filter": "hard",
+    "date_inclusive": true,
+    "date_basis": "original_publication_date",
+    "allow_material_updates_to_old_events": true,
+    "require_search_audit": true
   },
-
+  "regions": [
+    "北美地区",
+    "亚太地区",
+    "中东地区",
+    "欧洲地区",
+    "拉美地区",
+    "非洲地区"
+  ],
+  "region_codes": {
+    "北美地区": "NA",
+    "亚太地区": "APAC",
+    "中东地区": "ME",
+    "欧洲地区": "EU",
+    "拉美地区": "LATAM",
+    "非洲地区": "AFR"
+  },
+  "region_order_editable": true,
+  "priority_markets": [
+    "Thailand",
+    "Singapore",
+    "China",
+    "United States",
+    "Japan",
+    "South Korea",
+    "Indonesia",
+    "Vietnam",
+    "Germany",
+    "Brazil"
+  ],
+  "topic_priorities": {
+    "P0": [
+      "automotive_finance",
+      "hire_purchase",
+      "dealer_floorplan_financing",
+      "consumer_credit",
+      "credit_risk_and_npl",
+      "central_bank_policy",
+      "interest_rates",
+      "thailand_automotive_finance",
+      "asean_automotive_financing"
+    ],
+    "P1": [
+      "automotive_manufacturing",
+      "vehicle_sales_and_exports",
+      "ev_and_batteries",
+      "automotive_tariffs",
+      "factory_investment",
+      "automotive_recalls",
+      "financial_regulation",
+      "mergers_and_acquisitions",
+      "major_corporate_announcements"
+    ],
+    "P2": [
+      "robotics",
+      "physical_ai",
+      "autonomous_driving",
+      "semiconductors",
+      "industrial_automation",
+      "strategic_macro_events",
+      "geopolitical_and_trade_policy"
+    ]
+  },
+  "topics": [
+    "auto loans vehicle financing credit dealer floorplan financing interest rates defaults",
+    "Thailand auto loans household debt Bank of Thailand car sales financing",
+    "automotive production investment sales recalls tariffs EV batteries",
+    "central bank monetary policy inflation consumer lending banking",
+    "robotics physical AI autonomous driving automotive semiconductor",
+    "Thailand Bank of Thailand hire purchase vehicle financing NPL household debt",
+    "Thailand Federation of Thai Industries automobile sales production exports",
+    "ASEAN dealer financing automotive floorplan inventory lending",
+    "global central bank monetary policy rates auto finance vehicle affordability",
+    "automotive tariffs factory investments recalls robotics battery industry major announcements",
+    "financial regulation consumer protection auto lenders leasing delinquency"
+  ],
+  "local_queries": {
+    "泰国": [
+      "สินเชื่อรถยนต์ หนี้ครัวเรือน ธนาคารแห่งประเทศไทย",
+      "ยอดขายรถยนต์ สภาอุตสาหกรรม สินเชื่อเช่าซื้อ",
+      "ธนาคารแห่งประเทศไทย สินเชื่อเช่าซื้อรถยนต์ หนี้เสีย ประกาศ",
+      "สำนักงานเศรษฐกิจการคลัง รถยนต์ สินเชื่อ อัตราดอกเบี้ย",
+      "สภาอุตสาหกรรมแห่งประเทศไทย ยอดผลิตรถยนต์ ยอดขาย ส่งออก",
+      "ธนาคารแห่งประเทศไทย อัตราดอกเบี้ย นโยบายการเงิน",
+      "ไฟแนนซ์รถยนต์ ยอดปฏิเสธสินเชื่อ รถยนต์",
+      "การลงทุน อุตสาหกรรมยานยนต์ไฟฟ้า BOI"
+    ],
+    "中国": [
+      "汽车金融 车贷 银行 新能源汽车 出口 工信部 央行",
+      "中国人民银行 汽车消费贷款 政策 公告",
+      "工信部 汽车产销 新能源汽车 召回",
+      "新能源汽车 出口 关税 海外建厂 投资",
+      "汽车行业 机器人 智能驾驶 重大投资"
+    ],
+    "日本": [
+      "自動車 ローン 金利 販売 トヨタ 日銀",
+      "日本銀行 金融政策 自動車産業 投資 生産",
+      "トヨタ 日産 ホンダ 自動車 金融 ニュース",
+      "自動車 輸出 関税 電気自動車 投資",
+      "産業用ロボット 自動車工場 自動化"
+    ],
+    "韩国": [
+      "자동차 할부금융 대출 한국은행 현대차",
+      "금융위원회 자동차 할부금융 가계대출",
+      "현대자동차 기아 생산 투자 발표",
+      "전기차 배터리 수출 관세 투자",
+      "한국은행 기준금리 금융정책"
+    ],
+    "越南": [
+      "tín dụng ô tô ngân hàng doanh số xe",
+      "Ngân hàng Nhà nước lãi suất cho vay mua ô tô",
+      "sản xuất ô tô xe điện đầu tư xuất khẩu"
+    ],
+    "印尼": [
+      "kredit kendaraan pembiayaan mobil Bank Indonesia",
+      "penjualan mobil produksi kendaraan listrik investasi",
+      "OJK pembiayaan kendaraan kredit bermasalah"
+    ],
+    "德国": [
+      "Autokredit Zulassungen Automobilindustrie Bundesbank",
+      "Automobilindustrie Investitionen Elektromobilität Zölle",
+      "EZB Zinsen Autofinanzierung Kredit"
+    ],
+    "法国": [
+      "crédit automobile ventes voitures Banque de France",
+      "industrie automobile investissement véhicules électriques",
+      "Banque centrale taux crédit consommation automobile"
+    ],
+    "墨西哥": [
+      "crédito automotriz producción exportación INEGI",
+      "industria automotriz inversión aranceles exportaciones"
+    ],
+    "巴西": [
+      "financiamento de veículos Banco Central vendas automóveis",
+      "inadimplência financiamento veículos taxa de juros",
+      "indústria automotiva investimento produção veículos elétricos"
+    ],
+    "中东": [
+      "تمويل السيارات البنك المركزي أسعار الفائدة",
+      "صناعة السيارات الكهربائية استثمار السعودية الإمارات",
+      "السياسة النقدية القروض الاستهلاكية السيارات"
+    ],
+    "美国": [
+      "auto loan delinquency Federal Reserve CFPB vehicle financing",
+      "Federal Reserve interest rates consumer auto credit",
+      "automotive tariffs manufacturing investment vehicle recalls",
+      "robotics autonomous driving automotive manufacturing"
+    ],
+    "新加坡": [
+      "MAS car loan vehicle financing COE Singapore",
+      "Singapore vehicle financing interest rates MAS",
+      "Singapore automotive finance digital banking regulation"
+    ],
+    "英国": [
+      "FCA motor finance consumer redress commission",
+      "Bank of England interest rates vehicle financing"
+    ],
+    "澳大利亚": [
+      "RBA interest rates car loans automotive sales",
+      "ASIC motor vehicle finance consumer credit"
+    ]
+  },
+  "source_hierarchy": {
+    "tier_1_primary": [
+      "bot.or.th",
+      "mas.gov.sg",
+      "federalreserve.gov",
+      "consumerfinance.gov",
+      "sec.gov",
+      "bankofengland.co.uk",
+      "ecb.europa.eu",
+      "rba.gov.au",
+      "boj.or.jp",
+      "bsp.gov.ph",
+      "bi.go.id",
+      "sbv.gov.vn",
+      "pbc.gov.cn",
+      "oica.net",
+      "acea.auto",
+      "inegi.org.mx",
+      "ftim.or.th",
+      "thaigov.go.th",
+      "mof.go.th",
+      "boi.go.th",
+      "oie.go.th",
+      "toyota-global.com",
+      "global.toyota",
+      "byd.com",
+      "hyundai.com",
+      "korea.kr",
+      "mofcom.gov.cn",
+      "miit.gov.cn",
+      "nhtsa.gov",
+      "imf.org",
+      "worldbank.org"
+    ],
+    "tier_2_established_media": [
+      "reuters.com",
+      "apnews.com",
+      "channelnewsasia.com",
+      "bloomberg.com",
+      "ft.com",
+      "nikkei.com",
+      "bangkokpost.com",
+      "nationthailand.com"
+    ],
+    "tier_3_specialist_media": [
+      "autonews.com",
+      "electrek.co",
+      "insideevs.com",
+      "automotivedive.com"
+    ],
+    "prefer_primary_sources": true,
+    "prefer_free_access": true,
+    "do_not_treat_search_snippet_as_verified": true
+  },
+  "primary_domains": [
+    "bot.or.th",
+    "mas.gov.sg",
+    "federalreserve.gov",
+    "consumerfinance.gov",
+    "sec.gov",
+    "bankofengland.co.uk",
+    "ecb.europa.eu",
+    "rba.gov.au",
+    "boj.or.jp",
+    "bsp.gov.ph",
+    "bi.go.id",
+    "sbv.gov.vn",
+    "pbc.gov.cn",
+    "oica.net",
+    "acea.auto",
+    "inegi.org.mx",
+    "reuters.com",
+    "apnews.com",
+    "channelnewsasia.com",
+    "ftim.or.th",
+    "thaigov.go.th",
+    "mof.go.th",
+    "boi.go.th",
+    "oie.go.th",
+    "toyota-global.com",
+    "global.toyota",
+    "byd.com",
+    "hyundai.com",
+    "korea.kr",
+    "mofcom.gov.cn",
+    "miit.gov.cn",
+    "nhtsa.gov",
+    "imf.org",
+    "worldbank.org"
+  ],
   "search_budget": {
+    "max_queries": 65,
+    "results_per_query": 10,
+    "max_articles_to_review": 120,
     "reserve_queries_for_user_clues": 15,
     "reserve_queries_for_gap_search": 10,
-    "warn_if_coverage_incomplete": true
+    "prioritize_high_value_queries": true,
+    "stop_when_budget_exhausted": true,
+    "warn_if_coverage_incomplete": true,
+    "track_queries_by_region": true,
+    "track_queries_by_language": true,
+    "track_queries_by_topic": true
   },
-
   "verification": {
     "require_publication_date": true,
     "require_article_body": true,
     "require_locatable_evidence": true,
     "require_date_within_range": true,
     "verify_key_numeric_claims": true,
+    "verify_entities_and_actions": true,
+    "verify_currency_and_units": true,
     "prefer_free_primary_sources": true,
-    "unverified_default_selected": false
+    "search_free_alternative_if_paywalled": true,
+    "unverified_default_selected": false,
+    "statuses": [
+      "Verified",
+      "Partial",
+      "Pending",
+      "Rejected"
+    ],
+    "allow_automatic_selection_only_if_verified": true
   },
-
   "scoring": {
     "business_relevance": 30,
     "industry_impact": 25,
     "source_credibility": 20,
     "timeliness": 15,
     "actionability": 10,
-    "min_auto_select_score": 75
+    "min_auto_select_score": 75,
+    "high_priority_score": 85,
+    "manual_review_score": 60,
+    "require_score_explanation": true
   },
-
+  "deduplication": {
+    "normalize_urls": true,
+    "remove_tracking_parameters": true,
+    "title_similarity_check": true,
+    "event_level_deduplication": true,
+    "compare_entity_action_date_amount": true,
+    "allow_material_event_updates": true,
+    "preserve_deduplication_reason": true
+  },
+  "editorial": {
+    "output_language": "zh-CN",
+    "headline_style": "concise_professional",
+    "summary_style": "fact_first",
+    "distinguish_facts_from_analysis": true,
+    "preserve_original_numeric_units": true,
+    "avoid_speculation": true,
+    "avoid_sensational_headlines": true,
+    "allow_manual_editing": true,
+    "preserve_manual_edits": true
+  },
   "report": {
     "target_items": 30,
+    "max_report_items": 30,
     "allow_fewer_if_insufficient": true,
     "require_verified_for_auto_selection": true,
     "preserve_original_excel": true,
-    "use_original_outlook_template": true
-  }
+    "return_original_bytes_if_unchanged": true,
+    "use_original_excel_master": true,
+    "use_original_outlook_template": true,
+    "sync_preview_and_download": true,
+    "allow_region_reordering": true,
+    "require_manual_final_review": true
+  },
+  "excel": {
+    "template_path": "templates/XSTAR_Excel_Master.xlsx",
+    "meta_sheet": "meta",
+    "news_sheet": "news",
+    "columns": [
+      "region_code",
+      "region_name_zh",
+      "title",
+      "date",
+      "location",
+      "tags",
+      "summary",
+      "url",
+      "url_label",
+      "icon_img_url"
+    ],
+    "preserve_existing_text": true,
+    "preserve_styles": true,
+    "preserve_sheet_structure": true,
+    "preserve_date_formats": true,
+    "preserve_column_widths": true,
+    "preserve_row_heights": true,
+    "preserve_hyperlinks": true,
+    "preserve_metadata": true,
+    "modify_only_explicitly_edited_cells": true
+  },
+  "html": {
+    "template_path": "templates/HTML_Reference.html",
+    "use_original_card_structure": true,
+    "preserve_outlook_compatibility": true,
+    "preserve_region_headers": true,
+    "preserve_news_card_format": true,
+    "preserve_tag_styles": true,
+    "preserve_source_buttons": true,
+    "update_preview_after_edit": true
+  },
+  "audit": {
+    "record_search_queries": true,
+    "record_source_urls": true,
+    "record_publication_dates": true,
+    "record_verification_status": true,
+    "record_score_breakdown": true,
+    "record_deduplication_decisions": true,
+    "record_unresolved_issues": true,
+    "record_api_usage": true,
+    "show_coverage_warnings": true
+  },
+  "api": {
+    "key_mode": "user_provided",
+    "require_serper_key_for_search": true,
+    "require_openrouter_key_for_ai": true,
+    "use_streamlit_secrets": false,
+    "persist_api_keys": false,
+    "log_api_keys": false,
+    "allow_offline_excel_preview": true,
+    "allow_offline_excel_export": true
+  },
+  "min_score": 75,
+  "max_queries": 65,
+  "results_per_query": 10,
+  "max_articles_to_review": 120,
+  "max_report_items": 30
 }
