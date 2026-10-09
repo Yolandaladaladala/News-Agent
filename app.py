@@ -10,6 +10,7 @@ from dateutil import parser as dtparse
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
+from free_research import discover, extractive_review, ollama_review
 
 BASE=Path(__file__).parent
 RULES=json.loads((BASE/'searching_rules/config.json').read_text(encoding='utf-8'))
@@ -24,12 +25,11 @@ COLS=['region_code','region_name_zh','title','date','location','tags','summary',
 AUDIT=['score','status','evidence','source_date','source_domain','source_access','reason','selected','order']
 st.set_page_config(page_title='XSTAR News Research Agent',layout='wide',page_icon='📰')
 st.title('XSTAR · 全球汽车行业新闻研究 Agent')
-st.caption('日期 / 可选线索 → 多语言搜索 → 原文核验 → AI评分 → 编辑 → Excel + Outlook HTML')
+st.caption('日期 / 可选线索 → 免费多语言新闻发现 → 原文日期检查 → 可选自建 AI / 免费摘录 → 编辑 → Excel + Outlook HTML')
 
-def serper(query,start,end,key,num=10):
-    r=requests.post('https://google.serper.dev/search',headers={'X-API-KEY':key,'Content-Type':'application/json'},json={'q':f'{query} after:{start.isoformat()} before:{(end+timedelta(days=1)).isoformat()}','num':num},timeout=25)
-    r.raise_for_status()
-    return [{'title':x.get('title',''),'url':x.get('link',''),'snippet':x.get('snippet',''),'date_hint':x.get('date','')} for x in r.json().get('organic',[])]
+def search_news(query,start,end,num=10):
+    return discover(query,start,end,num)
+
 
 def scrape(url):
     try:
@@ -56,14 +56,11 @@ def parse_date(v):
     try:return dtparse.parse(str(v),fuzzy=True).date().isoformat()
     except Exception:return ''
 
-def ai_json(prompt,key,model):
-    r=requests.post('https://openrouter.ai/api/v1/chat/completions',headers={'Authorization':f'Bearer {key}','Content-Type':'application/json'},json={'model':model,'temperature':0,'response_format':{'type':'json_object'},'messages':[{'role':'system','content':'你是严格的新闻事实核验研究员。只使用给定原文证据，不得编造。只输出JSON。'},{'role':'user','content':prompt}]},timeout=85)
-    r.raise_for_status()
-    s=r.json()['choices'][0]['message']['content']
-    try:return json.loads(s)
-    except Exception:
-        m=re.search(r'\{.*\}',s,re.S)
-        return json.loads(m.group(0)) if m else {}
+def analyze_news(prompt,mode,endpoint,model):
+    if mode=="Ollama（自建模型）":
+        return ollama_review(prompt,endpoint,model)
+    return None
+
 
 def country_region(s):
     s=str(s).lower()
@@ -84,7 +81,7 @@ def extract_clues(file,txt):
             if title and title.lower()!='nan':clues.append(title);old.append(title)
     return list(dict.fromkeys(clues)),old
 
-def research(start,end,clues,serper_key,ai_key,model,progress):
+def research(start,end,clues,mode,endpoint,model,progress):
     maxq=int(RULES.get('max_queries',65))
     reserve=min(int(RULES.get('search_budget',{}).get('reserve_queries_for_gap_search',10)),maxq//3)
     buckets=[list(v) for v in RULES.get('local_queries',{}).values()]
@@ -110,11 +107,13 @@ def research(start,end,clues,serper_key,ai_key,model,progress):
         stage='多语言发现' if i<len(primary) else '补充搜索'
         progress.progress((i+1)/max(1,len(queries))*0.35,text=f'{stage} {i+1}/{len(queries)} · {q[:38]}')
         try:
-            for x in serper(q,start,end,serper_key,RULES['results_per_query']):
+            found,discovery_errors=search_news(q,start,end,RULES['results_per_query'])
+            errors.extend(f'{q[:30]}: {err}' for err in discovery_errors)
+            for x in found:
                 key=x['url'].split('?')[0].rstrip('/')
                 if key and key not in seen:seen.add(key);candidates.append(x)
         except Exception as e:errors.append(f'搜索失败 {q[:40]}: {e}')
-    if not candidates:raise RuntimeError('没有获得任何搜索结果。请检查 Serper Key、额度及网络。')
+    if not candidates:raise RuntimeError('免费新闻源没有返回结果。请缩短日期范围、减少搜索词，或稍后重试。')
     # Search rank can be noisy; prioritize accessible official sources without excluding other credible media.
     def rank(x):
         d=urlparse(x['url']).netloc.lower()
@@ -134,7 +133,14 @@ def research(start,end,clues,serper_key,ai_key,model,progress):
             continue
         prompt=f'''根据下方原文判断新闻是否值得进入XSTAR全球汽车金融行业快讯。研究日期 {start} 至 {end}。必须逐字摘取原文中支持核心事件及数字的证据片段（连续20-160字符）。不得使用片段之外的信息。\n评分权重：业务相关性30，行业影响25，来源可信度20，时效性15，可行动性10。\n返回JSON对象字段 title(中文), location(中文国家), region(六区之一), tags(2-3个中文标签用；分隔), summary(中文70-150字), evidence(原文逐字证据), score(0-100整数), reason(简短), supported(boolean)。\n标题:{x['title']}\n来源:{x['url']}\n正文:{evidence}'''
         try:
-            a=ai_json(prompt,ai_key,model)
+            a=analyze_news(prompt,mode,endpoint,model)
+            if a is None:
+                a=extractive_review(x['title'],evidence,urlparse(x['url']).netloc,
+                    any(urlparse(x['url']).netloc.lower().endswith(z) for z in RULES['primary_domains']))
+                a['region']=country_region(x['title']+' '+evidence[:500])
+                a['location']=''
+                a['tags']='待编辑'
+                a['supported']=False
             quote=str(a.get('evidence','')).strip()
             summary=str(a.get('summary',''))
             nums=re.findall(r'(?<![\w])\d[\d,.]*%?',summary)
@@ -266,13 +272,16 @@ with st.sidebar:
     file=st.file_uploader('上传原版 Excel（直接预览，保留全部原文和格式）',type=['xlsx'])
     clues_text=st.text_area('可选：粘贴新闻标题或 URL（每行一条）',height=130)
     st.caption('Excel 上传后直接预览；不调用 AI，不重写任何原文。AI 搜索是独立的补充功能。')
-    with st.expander('🔑 API Keys（每位使用者输入自己的密钥；不保存）', expanded=True):
-        sk=st.text_input('Serper API Key',value='', key='user_serper_key',type='password')
-        ak=st.text_input('OpenRouter API Key',value='', key='user_openrouter_key',type='password')
-        model=st.text_input('OpenRouter Model',value='openai/gpt-4o-mini')
-    st.caption('API Key 只用于本次会话的搜索请求，不会写入 Excel、HTML 或日志。请勿分享自己的 Key。')
+    mode=st.radio('内容处理方式',['免费摘录（无需任何 API Key）','Ollama（自建模型）'],index=0)
+    endpoint='';model=''
+    if mode=='Ollama（自建模型）':
+        endpoint=st.text_input('Ollama 服务地址',value='',placeholder='https://your-private-ollama-host')
+        model=st.text_input('Ollama 模型名称',value='qwen2.5:7b')
+        st.warning('云端 Streamlit 无法访问你电脑上的 localhost。请使用自己管理的可访问模型服务，并做好认证与访问控制。')
+    else:
+        st.caption('无需 Serper/OpenRouter。使用 GDELT + Google News RSS 发现新闻，提取原文供人工核验；不自动生成中文摘要。')
     load=st.button('📂 加载 Excel 并立即预览',use_container_width=True,disabled=file is None)
-    run=st.button('🔎 AI 搜索 / 补充研究',type='primary',use_container_width=True)
+    run=st.button('🔎 免费搜索 / 补充研究',type='primary',use_container_width=True)
     st.caption('规则可直接修改 searching_rules/config.json 和 RESEARCH_RULES.md')
 if load and file is not None:
     try:
@@ -288,12 +297,12 @@ if load and file is not None:
     except Exception as e:st.error(f'Excel 载入失败：{e}')
 if run:
     if start>end:st.error('开始日期不能晚于结束日期')
-    elif not sk or not ak:st.error('请配置 Serper 和 OpenRouter API Key')
+    elif mode=='Ollama（自建模型）' and not endpoint:st.error('请填写 Ollama 服务地址')
     else:
         try:
             clues,old=extract_clues(file,clues_text)
             bar=st.progress(0,text='准备搜索')
-            rows,errors,n=research(start,end,clues,sk,ak,model,bar)
+            rows,errors,n=research(start,end,clues,mode,endpoint,model,bar)
             if 'rows' in st.session_state and len(st.session_state.rows):
                 prior=st.session_state.rows
                 rows_df=pd.DataFrame(rows)
