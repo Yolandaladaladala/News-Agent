@@ -17,9 +17,57 @@
   "新加坡": ["MAS car loan vehicle financing COE Singapore"]
  },
  "primary_domains": ["bot.or.th", "mas.gov.sg", "federalreserve.gov", "consumerfinance.gov", "sec.gov", "bankofengland.co.uk", "ecb.europa.eu", "rba.gov.au", "boj.or.jp", "bsp.gov.ph", "bi.go.id", "sbv.gov.vn", "pbc.gov.cn", "oica.net", "acea.auto", "inegi.org.mx", "reuters.com", "apnews.com", "channelnewsasia.com"],
- "min_score": 70,
- "max_queries": 28,
- "results_per_query": 10,
- "max_articles_to_review": 65,
- "max_report_items": 30
+   "min_score": 75,
+  "max_queries": 65,
+  "results_per_query": 10,
+  "max_articles_to_review": 120,
+  "max_report_items": 30,
+
+  "research_strategy": {
+    "mode": "multi_pass",
+    "passes": [
+      "user_clue_research",
+      "broad_discovery",
+      "targeted_verification",
+      "coverage_gap_analysis",
+      "supplementary_search"
+    ],
+    "query_generation": "dynamic",
+    "prioritize_user_clues": true,
+    "require_local_language_search": true,
+    "allow_supplementary_queries": true
+  },
+
+  "search_budget": {
+    "reserve_queries_for_user_clues": 15,
+    "reserve_queries_for_gap_search": 10,
+    "warn_if_coverage_incomplete": true
+  },
+
+  "verification": {
+    "require_publication_date": true,
+    "require_article_body": true,
+    "require_locatable_evidence": true,
+    "require_date_within_range": true,
+    "verify_key_numeric_claims": true,
+    "prefer_free_primary_sources": true,
+    "unverified_default_selected": false
+  },
+
+  "scoring": {
+    "business_relevance": 30,
+    "industry_impact": 25,
+    "source_credibility": 20,
+    "timeliness": 15,
+    "actionability": 10,
+    "min_auto_select_score": 75
+  },
+
+  "report": {
+    "target_items": 30,
+    "allow_fewer_if_insufficient": true,
+    "require_verified_for_auto_selection": true,
+    "preserve_original_excel": true,
+    "use_original_outlook_template": true
+  }
 }
