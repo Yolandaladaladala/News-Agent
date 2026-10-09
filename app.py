@@ -147,9 +147,9 @@ def research(start,end,clues,mode,endpoint,model,progress):
             source_nums=set(re.sub(r'[,，\s]','',v) for v in re.findall(r'(?<![\w])\d[\d,.]*%?',evidence))
             numeric_ok=all(re.sub(r'[,，\s]','',v) in source_nums for v in nums)
             supported=bool(a.get('supported')) and len(quote)>=20 and quote in evidence and numeric_ok
-            score=max(0,min(100,int(a.get('score',0)))) if supported else 0
+            score=max(0,min(100,int(a.get('score',0)))) if (supported or mode!='Ollama（自建模型）') else 0
             region=region_name(a.get('region')) if a.get('region') in REGIONS or a.get('region') in CODE_REGIONS else country_region(a.get('location','')+' '+x['title'])
-            rows.append({'region_code':region_code(region),'region_name_zh':region,'title':str(a.get('title') or x['title']),'date':d,'location':str(a.get('location','')),'tags':str(a.get('tags','')),'summary':str(a.get('summary','')),'url':x['url'],'url_label':urlparse(x['url']).netloc,'icon_img_url':'','score':score,'status':'已核验' if supported else '待核验','evidence':quote if supported else '', 'source_date':d,'source_domain':urlparse(x['url']).netloc,'source_access':doc['access'],'reason':str(a.get('reason','')) if supported else '引文无法定位或摘要数字未在原文中匹配','selected':supported and score>=RULES['min_score'],'order':i+1})
+            rows.append({'region_code':region_code(region),'region_name_zh':region,'title':str(a.get('title') or x['title']),'date':d,'location':str(a.get('location','')),'tags':str(a.get('tags','')),'summary':str(a.get('summary','')),'url':x['url'],'url_label':urlparse(x['url']).netloc,'icon_img_url':'','score':score,'status':'已核验' if supported else ('待人工审核（免费摘录）' if mode!='Ollama（自建模型）' else '待核验'),'evidence':quote if (supported or mode!='Ollama（自建模型）') else '', 'source_date':d,'source_domain':urlparse(x['url']).netloc,'source_access':doc['access'],'reason':str(a.get('reason','')) if (supported or mode!='Ollama（自建模型）') else '引文无法定位或摘要数字未在原文中匹配','selected':supported and score>=RULES['min_score'],'order':i+1})
         except Exception as e:errors.append(f'AI分析失败 {x["title"][:35]}: {e}')
     # Near-title duplicate filter; preserves candidates for review.
     tokens=set()
